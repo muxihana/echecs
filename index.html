@@ -132,6 +132,9 @@
     .chatlog-head { flex: none; display: flex; align-items: center; justify-content: space-between;
       padding: 12px 12px 10px 18px; border-bottom: 1px solid rgba(122, 95, 73, .12); }   /* 表頭常駐：✕不用滑回去找（業主 08-28） */
     .chatlog-body { flex: 1; overflow-y: auto; padding: 8px 16px 18px; }
+    .chatlog-actions { display: flex; align-items: center; gap: 6px; }
+    .chatlog-status { flex: none; margin: 0; padding: 6px 18px 0; color: #a08a8d; font-size: .76rem; }
+    .chatlog-status:empty { display: none; }
     .chatlog-close { width: 30px; height: 30px; border: 0; border-radius: 50%;
       background: rgba(183, 110, 121, .16); color: #8a5560; font-size: 1rem; cursor: pointer; }
     .chatlog-title { font-size: .78rem; letter-spacing: .18em; color: #a08a8d; }
@@ -2108,10 +2111,26 @@
       chatlogOverlay.className = "chatlog-overlay";
       chatlogOverlay.hidden = true;
       chatlogOverlay.innerHTML = '<div class="chatlog-panel"><div class="chatlog-head"><span class="chatlog-title">本局對話</span>' +
-        '<button type="button" class="chatlog-close" aria-label="關閉">✕</button></div><div class="chatlog-body"></div></div>';
+        '<div class="chatlog-actions"><button type="button" class="chatlog-tool chatlog-export">匯出</button>' +
+        '<label class="chatlog-tool">匯入<input class="chatlog-import" type="file" accept=".png,.json,.md,.txt,image/png,application/json,text/plain,text/markdown"></label>' +
+        '<button type="button" class="chatlog-close" aria-label="關閉">✕</button></div></div>' +
+        '<p class="chatlog-status" aria-live="polite"></p><div class="chatlog-body"></div></div>';
       document.body.append(chatlogOverlay);
       const chatlogBody = chatlogOverlay.querySelector(".chatlog-body");
+      const chatlogTitle = chatlogOverlay.querySelector(".chatlog-title");
+      const chatlogStatus = chatlogOverlay.querySelector(".chatlog-status");
+      const chatlogImport = chatlogOverlay.querySelector(".chatlog-import");
+      // 匯出／匯入＝設定抽屜「攜帶資料」同一套（記憶包：跨局對話＋講評＋戰績），這裡只是多一個入口
+      chatlogOverlay.querySelector(".chatlog-export").addEventListener("click", exportMemory);
+      chatlogImport.addEventListener("change", async () => {
+        chatlogStatus.textContent = "正在辨識匯入檔…";
+        const result = await handleImportInput(chatlogImport);
+        chatlogStatus.textContent = elements.cardStatus.textContent;
+        if (result && result.kind === "memory") openChatlog();
+      });
       function openChatlog() {
+        // 標題句數＝跨局記憶（chatHistory，上限 CHAT_CAP），與牌桌「本桌對話（n/100）」同義
+        chatlogTitle.textContent = "本局對話（記憶 " + chatHistory.length + "/" + CHAT_CAP + "）";
         // 檢討時間軸＝事件流實錄（業主 08-28 二訂）：走子/他回手/悔棋/對話，發生什麼列什麼——悔棋也在帳上
         chatlogBody.replaceChildren();
         if (!coachTranscript.length) {
