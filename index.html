@@ -2130,7 +2130,7 @@
       });
       function openChatlog() {
         // 標題句數＝跨局記憶（chatHistory，上限 CHAT_CAP），與牌桌「本桌對話（n/100）」同義
-        chatlogTitle.textContent = "本局對話（記憶 " + chatHistory.length + "/" + CHAT_CAP + "）";
+        chatlogTitle.textContent = "本局對話（" + chatHistory.length + "/" + CHAT_CAP + "）";
         // 檢討時間軸＝事件流實錄（業主 08-28 二訂）：走子/他回手/悔棋/對話，發生什麼列什麼——悔棋也在帳上
         chatlogBody.replaceChildren();
         if (!coachTranscript.length) {
