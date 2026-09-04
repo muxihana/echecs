@@ -1,0 +1,2359 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="description" content="讓角色坐在對面，陪你下西洋棋、看盤講評，也記得你反覆犯的錯。">
+  <title>Échecs</title>
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Échecs">
+  <!-- iOS 不理 viewport 的 user-scalable，鎖縮放要靠這兩味（行事曆同配方）：gesturestart 擋捏合、touch-action 擋雙擊放大 -->
+  <script>document.addEventListener('gesturestart', function (e) { e.preventDefault(); });</script>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+      --ink: #4a3728;
+      --muted: #77675b;
+      --paper: #fbf6ed;
+      --panel: rgba(255, 252, 246, .92);
+      --line: #ecd8da;
+      --light-square: #ead8bd;
+      --dark-square: #9b6a45;
+      --accent: #b76e79;   /* 原綠 #315f4d，業主 08-28 掃綠令：全室字與鈕禁綠 */
+      --warning: #9e3e30;
+    }
+
+    * { box-sizing: border-box; }
+
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+
+    html, body { touch-action: manipulation; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--ink);
+      /* 底色統一棋室大廳 #f7eef0 素色（業主 08-28 二度抓包：白色柔光漸層會跟狀態列撞出色差線，拆） */
+      background: #f7eef0;
+    }
+
+    button, select, input, textarea { font: inherit; }
+
+    .app {
+      width: min(1120px, 100%);
+      min-height: 100vh;
+      margin: 0 auto;
+      padding: clamp(14px, 3vw, 34px);
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(240px, 320px);
+      align-items: center;
+      gap: clamp(18px, 4vw, 44px);
+    }
+
+    .play-area { min-width: 0; }
+
+    .heading {
+      display: flex;
+      align-items: center;   /* baseline 會讓兩顆藥丸歪掉（業主 08-28：「他們是歪的！！！」） */
+      justify-content: space-between;
+      gap: 12px;
+      margin: 0 auto 12px;
+      width: min(74vh, 100%);
+    }
+
+    h1 {
+      margin: 0;
+      /* 草寫花體 Chess（業主 08-28 欽點）：iOS=Snell Roundhand、Windows=Segoe Script，逐層退 */
+      font-family: "Snell Roundhand", "Savoye LET", "Segoe Script", "Brush Script MT", cursive;
+      font-size: clamp(1.9rem, 5vw, 2.6rem);
+      font-weight: 700;
+      letter-spacing: .02em;
+      color: #8a5560;
+      line-height: 1;
+    }
+
+    .turn-badge {
+      flex: none;
+      padding: 5px 12px;
+      min-height: 34px;
+      display: flex;
+      align-items: center;
+      border: 1px solid #d9b2b8;   /* 與教練鈕同款玫瑰皮，鄰居不吵架（業主 08-28） */
+      border-radius: 999px;
+      color: #a05f6a;
+      background: #fdf7f8;
+      font-size: .74rem;
+      font-weight: 800;
+    }
+
+    /* 回棋室：右上素字（家格式，同對局史 back-link）；相對路徑 ../chambre/ 在 GitHub Pages 同 origin 下指向大廳 */
+    .home-link { flex: none; padding: 8px 0; color: #a08a8d; text-decoration: none; font-size: .82rem; -webkit-tap-highlight-color: transparent; }
+    .home-link:active { color: #b76e79; }
+    .setting-button { flex: none; min-height: 34px; padding: 5px 11px; border: 1px solid #d9b2b8; border-radius: 999px; color: #a05f6a; background: #fdf7f8; cursor: pointer; font-size: .76rem; font-weight: 800; }
+
+    .board-stage {
+      position: relative;
+      width: min(74vh, 100%);
+      margin: auto;
+      padding: 84px 0 70px;   /* 邊帶＝頭像和泡泡的家：角色在上、玩家在下 */
+    }
+
+    .board-frame {
+      width: 100%;
+      padding: clamp(5px, 1.2vw, 10px);
+      border-radius: 8px;
+      background: #513a2b;
+      box-shadow: 0 12px 35px rgba(56, 38, 24, .24), inset 0 0 0 1px rgba(255,255,255,.16);
+    }
+
+    .coach-tools[hidden], .chat-row[hidden] { display: none; }
+    .board-stage.two-player .avatar, .board-stage.two-player .bubble-stack { display: none; }
+    .board-stage.coach-off .avatar, .board-stage.coach-off .bubble-stack { display: none; }   /* 教練關＝對座整組收（業主 08-28 點單） */
+
+    /* 本局對話浮窗（點頭像開，微透明玻璃，右上✕關掉繼續下棋） */
+    .chatlog-overlay { position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; background: rgba(58, 44, 34, .28); }
+    .chatlog-overlay[hidden] { display: none; }
+    .chatlog-panel { position: relative; display: flex; flex-direction: column; width: min(440px, 92vw); max-height: 74vh;
+      border-radius: 16px; border: 1px solid rgba(122, 95, 73, .25); overflow: hidden;
+      background: rgba(251, 246, 237, .88); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+      box-shadow: 0 18px 44px rgba(48, 38, 31, .3); }
+    .chatlog-head { flex: none; display: flex; align-items: center; justify-content: space-between;
+      padding: 12px 12px 10px 18px; border-bottom: 1px solid rgba(122, 95, 73, .12); }   /* 表頭常駐：✕不用滑回去找（業主 08-28） */
+    .chatlog-body { flex: 1; overflow-y: auto; padding: 8px 16px 18px; }
+    .chatlog-close { width: 30px; height: 30px; border: 0; border-radius: 50%;
+      background: rgba(183, 110, 121, .16); color: #8a5560; font-size: 1rem; cursor: pointer; }
+    .chatlog-title { font-size: .78rem; letter-spacing: .18em; color: #a08a8d; }
+    .cl-row { display: flex; margin: 7px 0; }
+    .cl-row.her { justify-content: flex-end; }
+    .cl-bubble { max-width: 82%; padding: 8px 11px; font-size: .9rem; line-height: 1.55;
+      border: 1px solid rgba(122, 95, 73, .16); }
+    .cl-row.him .cl-bubble { background: #fff; border-radius: 4px 13px 13px 13px; }
+    .cl-row.her .cl-bubble { background: var(--her-bub, #f0e0e2); color: var(--her-fg, inherit); border-radius: 13px 4px 13px 13px; }
+    .cl-empty { text-align: center; color: #a08a8d; font-size: .85rem; padding: 20px 0; }
+    .cl-move { text-align: center; color: #a08a8d; font-size: .7rem; letter-spacing: .1em; margin: 12px 0 4px; }
+    .cl-move.cl-undo { color: #b76e79; font-weight: 700; }
+
+    .avatar {
+      position: absolute;
+      z-index: 12;
+      cursor: pointer;
+      width: 50px;
+      height: 50px;
+      overflow: hidden;
+      border: 3px solid #fffaf3;
+      border-radius: 50%;
+      background: #8d796b;
+      box-shadow: 0 3px 12px rgba(48, 38, 31, .3);
+    }
+
+    .avatar img, .avatar-fallback {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+
+    .avatar img { object-fit: cover; }
+    .avatar-fallback { display: grid; place-items: center; color: #fff; background: #bd8d83; font-weight: 800; }
+    .avatar img[hidden] { display: none; }
+    .avatar-fallback[hidden] { display: none; }
+    .avatar-him { top: 0; left: -9px; }
+    .avatar-her { right: -9px; bottom: 0; }
+
+    .bubble-stack {
+      position: absolute;
+      z-index: 11;
+      display: flex;
+      width: calc(100% - 58px);
+      pointer-events: none;
+    }
+
+    /* 泡泡只准往棋盤外長：角色往上疊、玩家往下疊 */
+    .bubble-stack-him {
+      top: auto;
+      bottom: calc(100% - 80px);
+      left: 64px;
+      width: calc(100% - 70px);
+      flex-direction: column;
+      justify-content: flex-end;
+      align-items: flex-start;
+    }
+
+    .bubble-stack-her {
+      top: calc(100% - 66px);
+      bottom: auto;
+      right: 64px;
+      width: calc(100% - 70px);
+      flex-direction: column;
+      align-items: flex-end;
+    }
+
+    .coach-bubble {
+      position: relative;
+      width: fit-content;
+      max-width: min(96%, 560px);   /* 一句話盡量一行內講完，少壓棋盤（業主 08-28 點單加寬） */
+      margin: 0 0 6px;
+      padding: 8px 11px;
+      border: 1px solid rgba(122, 95, 73, .18);
+      border-radius: 5px 13px 13px 13px;
+      color: #3b3028;
+      background: rgba(255, 250, 243, .96);
+      box-shadow: 0 2px 9px rgba(72, 51, 36, .18);
+      font-size: .84rem;
+      line-height: 1.5;
+      transform-origin: 0 0;
+    }
+    .coach-bubble.pop { animation: coach-pop .22s ease-out both; }   /* 動畫只給新句：重畫不重閃（業主 08-28 抓包） */
+
+    .coach-bubble.her {
+      border-radius: 13px 5px 13px 13px;
+      color: var(--her-fg, #553c42);
+      background: var(--her-bub, rgba(240, 224, 226, .97));   /* 玩家泡泡＝淡玫瑰（同牌桌公開版）；家版靠 theme.json 覆蓋成深玫瑰，公開版沒有主題檔，預設值就是成品色，禁綠 */
+      transform-origin: 100% 100%;
+    }
+
+    .coach-thinking {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      margin: 0 0 6px;
+      padding: 7px 10px;
+      border: 1px solid rgba(122, 95, 73, .16);
+      border-radius: 5px 12px 12px 12px;
+      color: var(--muted);
+      background: rgba(255, 250, 243, .94);
+      box-shadow: 0 2px 9px rgba(72, 51, 36, .14);
+      font-size: .76rem;
+      animation: coach-pop .22s ease-out both;
+    }
+
+    @keyframes coach-pop {
+      from { opacity: 0; transform: scale(.84); }
+      to { opacity: 1; transform: scale(1); }
+    }
+
+    #board {
+      display: grid;
+      grid-template-columns: repeat(8, 1fr);
+      grid-template-rows: repeat(8, 1fr);   /* 沒定列高＝空列會縮，棋盤走著走著變長方形（2026-08-28 業主抓包） */
+      aspect-ratio: 1;
+      overflow: hidden;
+      border: 1px solid rgba(49, 31, 20, .35);
+    }
+
+    .square {
+      position: relative;
+      display: grid;
+      place-items: center;
+      width: 100%;
+      min-width: 0;
+      padding: 0;
+      border: 0;
+      color: #17130f;
+      background: var(--light-square);
+      cursor: default;
+      user-select: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .square.dark { background: var(--dark-square); }
+    .square.selectable, .square.legal { cursor: pointer; }
+
+    .square:focus-visible {
+      z-index: 5;
+      outline: 3px solid #fff;
+      outline-offset: -4px;
+    }
+
+    .square.selected::after {
+      content: "";
+      position: absolute;
+      inset: 7%;
+      border: clamp(2px, .4vw, 4px) solid #f4c84f;
+      border-radius: 5px;
+      box-shadow: inset 0 0 0 1px rgba(54, 39, 18, .35);
+      pointer-events: none;
+    }
+
+    .square.legal::before {
+      content: "";
+      position: absolute;
+      z-index: 2;
+      width: 25%;
+      aspect-ratio: 1;
+      border-radius: 50%;
+      background: rgba(29, 93, 67, .63);
+      box-shadow: 0 0 0 2px rgba(255,255,255,.32);
+      pointer-events: none;
+    }
+
+    /* 將軍可視化：兇手紅圈、路線淡紅、國王紅框 */
+    .square.check-source::after {
+      content: "";
+      position: absolute;
+      inset: 6%;
+      border: clamp(2px, .45vw, 4px) solid rgba(178, 34, 34, .85);
+      border-radius: 50%;
+      pointer-events: none;
+    }
+    .square.check-path { box-shadow: inset 0 0 0 100vmax rgba(178, 34, 34, .18); }
+    .square.check-king { box-shadow: inset 0 0 0 clamp(3px, .5vw, 5px) rgba(178, 34, 34, .8); }
+
+    .square.legal.capture::before {
+      width: 76%;
+      background: transparent;
+      border: clamp(3px, .6vw, 6px) solid rgba(29, 93, 67, .72);
+      box-shadow: none;
+    }
+
+    .piece {
+      position: relative;
+      z-index: 1;
+      font-family: "Segoe UI Symbol", "Noto Sans Symbols 2", serif;
+      font-size: clamp(1.85rem, min(7.2vw, 8.4vh), 4.9rem);
+      line-height: 1;
+      transform: translateY(-2%);
+      text-shadow: 0 1px 1px rgba(255,255,255,.55);
+    }
+
+    .piece.black {
+      color: #16130f;
+      text-shadow: 0 1px 1px rgba(255,255,255,.35);
+    }
+
+    .piece.white {
+      color: #fffaf0;
+      text-shadow: 0 1px 1px #2f251e, 1px 0 1px #2f251e, -1px 0 1px #2f251e, 0 -1px 1px #2f251e;
+    }
+
+    .coord {
+      position: absolute;
+      z-index: 3;
+      font-size: clamp(.55rem, 1.4vw, .76rem);
+      font-weight: 800;
+      line-height: 1;
+      pointer-events: none;
+    }
+
+    .coord.file { right: 5px; bottom: 4px; }
+    .coord.rank { left: 5px; top: 4px; }
+    .square:not(.dark) .coord { color: #855b3e; }
+    .square.dark .coord { color: #f0ddbf; }
+
+    .panel {
+      min-height: 420px;
+      max-height: min(74vh, 680px);
+      display: flex;
+      flex-direction: column;
+      padding: clamp(16px, 2.6vw, 24px);
+      border: 1px solid rgba(122, 95, 73, .2);
+      border-radius: 14px;
+      background: var(--panel);
+      box-shadow: 0 9px 28px rgba(72, 51, 36, .12);
+    }
+
+    #status {
+      margin: 0 0 16px;
+      padding: 12px 14px;
+      border-left: 4px solid var(--accent);
+      border-radius: 4px;
+      background: #f9edf0;
+      font-weight: 750;
+      line-height: 1.45;
+    }
+
+    #status.check { color: var(--warning); border-color: var(--warning); background: #faece8; }
+    #status.game-over { color: #5b351d; border-color: #b77a31; background: #f8ead7; }
+
+    .panel h2 {
+      margin: 0 0 9px;
+      font-size: .82rem;
+      color: var(--muted);
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+
+    .settings {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin: 0 0 16px;
+    }
+
+    .setting {
+      display: grid;
+      gap: 5px;
+      color: var(--muted);
+      font-size: .78rem;
+      font-weight: 750;
+    }
+
+    .setting select {
+      width: 100%;
+      min-height: 42px;
+      padding: 7px 30px 7px 9px;
+      border: 1px solid #bca790;
+      border-radius: 8px;
+      color: var(--ink);
+      background: #fffaf3;
+    }
+
+    .setting select:focus-visible { outline: 3px solid rgba(183,110,121,.35); outline-offset: 2px; }
+
+    .coach-tools {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      width: min(74vh, 100%);
+      margin: 2px auto 10px;
+    }
+
+    /* 按鈕全家改乾燥玫瑰系（業主 08-28 點單）；開關住標題列、求救搬進輸入列與送出同款 */
+    .coach-toggle {
+      min-height: 34px;
+      padding: 5px 12px;
+      margin-left: auto;
+      border: 1px solid #d9b2b8;
+      border-radius: 999px;
+      color: #a05f6a;
+      background: #fdf7f8;
+      cursor: pointer;
+      font-size: .74rem;
+      font-weight: 800;
+      align-self: center;
+      flex: none;
+    }
+
+    .coach-toggle[aria-checked="false"] { color: var(--muted); }
+    .coach-toggle:focus-visible { outline: 3px solid rgba(183,110,121,.3); outline-offset: 2px; }
+
+    .help-button:focus-visible, .chat-row input:focus-visible, .chat-row button:focus-visible {
+      outline: 3px solid rgba(183,110,121,.3);
+      outline-offset: 2px;
+    }
+
+    .help-button:disabled { cursor: not-allowed; opacity: .42; }
+
+    .chat-row {
+      width: min(74vh, 100%);
+      margin: 0 auto 12px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto auto;
+      gap: 8px;
+    }
+
+    .chat-row input {
+      min-width: 0;
+      min-height: 44px;
+      padding: 8px 11px;
+      border: 1px solid #bca790;
+      border-radius: 10px;
+      color: var(--ink);
+      background: #fffaf3;
+      font-size: 16px;   /* ≥16px：字夠大＋iOS 聚焦不自動放大頁面（業主 08-28 點單） */
+    }
+
+    .chat-row button {
+      min-width: 64px;
+      min-height: 42px;
+      padding: 7px 12px;
+      border: 1px solid #a05f6a;
+      border-radius: 10px;
+      color: #fff;
+      background: #b76e79;   /* 乾燥玫瑰主色：送出與求救同款（業主 08-28 點單） */
+      cursor: pointer;
+      font-weight: 800;
+    }
+
+    .chat-row input:disabled, .chat-row button:disabled { cursor: not-allowed; opacity: .55; }
+
+    .thinking-dots { display: inline-flex; gap: 3px; }
+
+    .thinking-dots i {
+      width: 4px;
+      height: 4px;
+      border-radius: 50%;
+      background: currentColor;
+      animation: coach-dot 1.1s infinite ease-in-out;
+    }
+
+    .thinking-dots i:nth-child(2) { animation-delay: .15s; }
+    .thinking-dots i:nth-child(3) { animation-delay: .3s; }
+
+    @keyframes coach-dot {
+      0%, 70%, 100% { transform: translateY(0); opacity: .35; }
+      35% { transform: translateY(-3px); opacity: 1; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .thinking-dots i, .coach-bubble, .coach-thinking { animation: none; }
+    }
+
+    .history-details {
+      margin: 0 0 18px;
+      border-top: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+    }
+
+    .history-details summary {
+      padding: 10px 4px;
+      color: var(--muted);
+      cursor: pointer;
+      font-size: .82rem;
+      font-weight: 800;
+      letter-spacing: .08em;
+      list-style-position: inside;
+    }
+
+    #history {
+      max-height: 210px;
+      padding: 0 4px 10px;
+      overflow: auto;
+    }
+
+    .move-row {
+      display: grid;
+      grid-template-columns: 2.2rem 1fr 1fr;
+      gap: 8px;
+      padding: 5px 4px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .move-number { color: var(--muted); }
+    .empty-history { margin: 8px 4px; color: var(--muted); }
+
+    .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+    .action {
+      min-height: 44px;
+      border: 1px solid #d9b2b8;
+      border-radius: 8px;
+      color: var(--ink);
+      background: #fdf7f8;
+      cursor: pointer;
+      font-weight: 700;
+    }
+
+    .action:hover { background: #f7e9eb; }
+    a.history-link { display: flex; align-items: center; justify-content: center; margin-top: 10px;
+      text-decoration: none; color: var(--ink); font-size: .9rem; }
+    .action:focus-visible { outline: 3px solid rgba(183,110,121,.3); outline-offset: 2px; }
+    .action:disabled { cursor: not-allowed; opacity: .45; }
+
+    .hint {
+      margin: 14px 0 0;
+      color: var(--muted);
+      font-size: .82rem;
+      line-height: 1.5;
+    }
+
+    #difficultyNote { margin-top: 6px; }
+
+    #board.locked .square { cursor: wait; }
+
+    .setup-note { margin: 12px 0 0; padding: 10px 11px; border-radius: 9px; color: #7b5159; background: #f9edf0; font-size: .8rem; line-height: 1.5; }
+    .setup-note.ready { color: #79515a; background: #f5e6e9; }
+    .chatlog-actions { display: flex; align-items: center; gap: 5px; }
+    .chatlog-tool { position: relative; min-height: 30px; padding: 4px 8px; display: grid; place-items: center; border: 1px solid #d9b2b8; border-radius: 7px; color: #87525b; background: #fff; cursor: pointer; font-size: .72rem; font-weight: 800; }
+    .chatlog-tool input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+    .cl-day { text-align: center; color: #a08a8d; font-size: .7rem; letter-spacing: .1em; margin: 12px 0 4px; }
+    .drawer-overlay { position: fixed; inset: 0; z-index: 70; display: flex; justify-content: flex-end; background: rgba(58,44,34,.32); }
+    .drawer-overlay[hidden] { display: none; }
+    .drawer { width: min(480px,100%); height: 100%; overflow-y: auto; background: #fffaf5; box-shadow: -12px 0 36px rgba(48,38,31,.2); }
+    .drawer-head { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 12px 10px 18px; border-bottom: 1px solid rgba(122,95,73,.12); background: #fffaf5; }
+    .drawer-head h2 { margin: 0; color: #8a5560; }
+    .icon-close { width: 32px; height: 32px; border: 0; border-radius: 50%; color: #8a5560; background: rgba(183,110,121,.16); cursor: pointer; }
+    .settings-form { padding: 18px; display: grid; gap: 15px; }
+    fieldset { margin: 0; padding: 14px; border: 1px solid var(--line); border-radius: 11px; }
+    legend { padding: 0 6px; color: #8a5560; font-weight: 800; }
+    .field { display: grid; gap: 5px; margin-bottom: 11px; }
+    .field:last-child { margin-bottom: 0; }
+    .field label { color: var(--muted); font-size: .8rem; font-weight: 750; }
+    .field input, .field textarea, .field select { width: 100%; min-width: 0; padding: 9px 10px; border: 1px solid #bca790; border-radius: 8px; color: var(--ink); background: #fff; font-size: 16px; }
+    .field textarea { min-height: 180px; resize: vertical; line-height: 1.5; }
+    .inline { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 7px; align-items: stretch; }
+    .quick-picks { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+    .card-tools, .avatar-upload-grid { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 7px; margin-bottom: 10px; }
+    .avatar-upload-grid { grid-template-columns: 1fr 1fr; }
+    .avatar-slot { display: flex; align-items: center; gap: 8px; min-width: 0; }
+    .avatar-preview { flex: none; width: 44px; height: 44px; overflow: hidden; border: 2px solid #e6d2c4; border-radius: 50%; background: #bd8d83; display: grid; place-items: center; color: #fff; font-weight: 800; }
+    .avatar-preview img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .avatar-preview img[hidden] { display: none; }
+    .small-button, .danger-button, .upload-label { min-height: 40px; padding: 7px 11px; border: 1px solid #b9828a; border-radius: 8px; color: #87525b; background: #fff; cursor: pointer; font-weight: 750; }
+    .upload-label { position: relative; display: grid; place-items: center; text-align: center; }
+    .upload-label input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+    .danger-button { color: #8c3232; border-color: #c99191; }
+    .status { min-height: 1.5em; margin: 0; color: var(--muted); font-size: .8rem; }
+    .privacy-mini { margin: 0; color: var(--muted); font-size: .78rem; line-height: 1.55; }
+
+    @media (max-width: 760px) {
+      .app {
+        min-height: auto;
+        display: block;
+        padding: 12px;
+      }
+      .heading, .board-stage, .coach-tools, .chat-row { width: min(94vw, calc(100vh - 170px)); }
+      .panel {
+        width: min(94vw, 560px);
+        min-height: 0;
+        max-height: none;
+        margin: 16px auto 0;
+      }
+      #history { max-height: 190px; }
+      .avatar-him { left: -4px; }
+      .avatar-her { right: -4px; }
+    }
+
+    @media (max-height: 560px) and (orientation: landscape) {
+      .app { align-items: start; padding-block: 10px; }
+      .heading, .board-stage, .coach-tools, .chat-row { width: min(76vh, 100%); }
+    }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <section class="play-area" aria-label="西洋棋盤區">
+      <div class="heading">
+        <h1>Échecs</h1>
+        <button id="coachToggle" class="coach-toggle" type="button" role="switch" aria-checked="true">教練 開</button>
+        <div id="turnBadge" class="turn-badge" aria-live="polite">白方回合</div>
+        <button id="settingButton" class="setting-button" type="button">設定</button>
+        <a class="home-link" href="../chambre/">回棋室</a>
+      </div>
+      <div id="coachStage" class="board-stage coach-stage">
+        <div class="avatar avatar-him" role="button" tabindex="0" aria-label="開啟對話">
+          <img id="himAvatar" alt="" hidden>
+          <span id="himAvatarFallback" class="avatar-fallback">角</span>
+        </div>
+        <div id="himBubbleStack" class="bubble-stack bubble-stack-him" aria-live="polite"></div>
+        <div class="board-frame">
+          <div id="board" role="grid" aria-label="西洋棋盤"></div>
+        </div>
+        <div id="herBubbleStack" class="bubble-stack bubble-stack-her" aria-live="polite"></div>
+        <div class="avatar avatar-her" role="button" tabindex="0" aria-label="開啟對話">
+          <img id="herAvatar" alt="" hidden>
+          <span id="herAvatarFallback" class="avatar-fallback">你</span>
+        </div>
+      </div>
+      <div id="coachTools" class="coach-tools" hidden></div>
+      <form id="chatForm" class="chat-row" autocomplete="off">
+        <label class="sr-only" for="chatInput">跟他說話</label>
+        <input id="chatInput" type="text" maxlength="300" placeholder="輸入訊息">
+        <button id="chatSendButton" type="submit">送出</button>
+        <button id="helpButton" class="help-button" type="button">求救</button>
+      </form>
+    </section>
+
+    <aside class="panel" aria-label="對局資訊">
+      <div class="settings">
+        <label class="setting" for="modeSelect">
+          模式
+          <select id="modeSelect">
+            <option value="computer" selected>對電腦</option>
+            <option value="two-player">雙人</option>
+          </select>
+        </label>
+        <label class="setting" for="difficultySelect">
+          難度（新局生效）
+          <select id="difficultySelect">
+            <option value="beginner" selected>入門</option>
+            <option value="easy">初級</option>
+            <option value="medium">中級</option>
+            <option value="hard">困難</option>
+          </select>
+        </label>
+      </div>
+      <p id="status" role="status" aria-live="polite">白方回合</p>
+      <details id="historyDetails" class="history-details">
+        <summary>走子紀錄 · SAN（<span id="historyCount">0</span>）</summary>
+        <div id="history" aria-label="走子紀錄"></div>
+      </details>
+      <div class="actions">
+        <button id="undoButton" class="action" type="button">悔棋</button>
+        <button id="newGameButton" class="action" type="button">新局</button>
+      </div>
+      <p class="hint">點選己方棋子，再點亮起的合法落點。兵抵達底線時會自動升后。</p>
+      <p id="difficultyNote" class="hint" aria-live="polite"></p>
+      <p id="setupNote" class="setup-note">設定完成後他會開口</p>
+    </aside>
+  </main>
+
+  <div id="settingsOverlay" class="drawer-overlay" hidden>
+    <aside class="drawer" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+      <header class="drawer-head"><h2 id="settingsTitle">Échecs 設定</h2><button class="icon-close" type="button" data-close-settings aria-label="關閉">×</button></header>
+      <form id="settingsForm" class="settings-form">
+        <p class="setting-note">這些設定跟棋室大廳（Chambre）共用：在大廳或任何一房改，其他房都會跟著換。</p>
+        <fieldset>
+          <legend>API</legend>
+          <div class="quick-picks" aria-label="服務商快選">
+            <button class="small-button" type="button" data-endpoint-preset="google">Google AI Studio</button>
+            <button class="small-button" type="button" data-endpoint-preset="openrouter">OpenRouter</button>
+            <button class="small-button" type="button" data-endpoint-preset="custom">自訂</button>
+          </div>
+          <div class="field"><label for="endpointInput">端點網址</label><input id="endpointInput" name="endpoint" autocomplete="url"></div>
+          <div class="field"><label for="apiKeyInput">金鑰</label><div class="inline"><input id="apiKeyInput" name="apiKey" type="password" autocomplete="off"><button id="toggleKeyButton" class="small-button" type="button">顯示</button></div></div>
+          <div class="field"><label for="modelInput">模型名</label><div class="inline"><input id="modelInput" name="model" autocomplete="off"><button id="loadModelsButton" class="small-button" type="button">撈清單</button></div><select id="modelSelect" class="model-select" hidden></select></div>
+          <p id="modelStatus" class="status" aria-live="polite"></p>
+        </fieldset>
+        <fieldset>
+          <legend>角色卡</legend>
+          <div class="card-tools"><label class="upload-label">上傳檔案<input id="cardFileInput" type="file" accept=".png,.json,.md,.txt,image/png,application/json,text/plain,text/markdown"></label><button id="exportCardButton" class="small-button" type="button">匯出卡包</button></div>
+          <p id="cardStatus" class="status" aria-live="polite">上傳會覆蓋下方欄位；也可以直接手填。</p>
+          <div class="field"><label for="characterNameInput">角色名</label><input id="characterNameInput" name="characterName" autocomplete="off"></div>
+          <div class="field"><label for="characterDescriptionInput">角色描述</label><textarea id="characterDescriptionInput" name="characterDescription" placeholder="外觀、性格、說話風格"></textarea></div>
+          <div class="field"><label for="playerNameInput">玩家稱呼（他怎麼叫你）</label><input id="playerNameInput" name="playerName" value="你" autocomplete="off"></div>
+          <div class="field"><label for="playerSkillInput">你的棋力</label><select id="playerSkillInput" name="playerSkill"><option value="beginner">初學者</option><option value="experienced">會下</option></select></div>
+          <div class="avatar-upload-grid">
+            <div class="avatar-slot"><span class="avatar-preview"><img id="himAvatarPreview" alt="" hidden><span id="himPreviewEmpty">角</span></span><label class="upload-label">他的頭像<input id="himAvatarInput" type="file" accept="image/*"></label></div>
+            <div class="avatar-slot"><span class="avatar-preview"><img id="playerAvatarPreview" alt="" hidden><span id="playerPreviewEmpty">你</span></span><label class="upload-label">你的頭像<input id="playerAvatarInput" type="file" accept="image/*"></label></div>
+          </div>
+          <p id="avatarStatus" class="status" aria-live="polite">頭像會縮至 256 像素後儲存。</p>
+        </fieldset>
+        <fieldset>
+          <legend>攜帶資料</legend>
+          <div class="card-tools"><button id="exportMemoryButton" class="small-button" type="button">匯出記憶包</button><label class="upload-label">匯入<input id="memoryFileInput" type="file" accept=".png,.json,.md,.txt,image/png,application/json,text/plain,text/markdown"></label></div>
+        </fieldset>
+        <p class="privacy-mini">資料只存在這個瀏覽器的本站儲存空間。金鑰只會由你的瀏覽器直送你設定的 API 端點。</p>
+        <button id="clearButton" class="danger-button" type="button">清除所有資料</button>
+      </form>
+    </aside>
+  </div>
+
+  <script type="module">
+    import { Chess } from "./vendor/chess.js";
+
+    (() => {
+      "use strict";
+
+      const PIECES = {
+        w: { k: "♔", q: "♕", r: "♖", b: "♗", n: "♘", p: "♙" },
+        b: { k: "♚", q: "♛", r: "♜", b: "♝", n: "♞", p: "♟" }
+      };
+      const PIECE_NAMES = { k: "王", q: "后", r: "車", b: "象", n: "馬", p: "兵" };
+      const COACH_PIECE_NAMES = { k: "國王", q: "皇后", r: "城堡", b: "主教", n: "騎士", p: "小兵" };   /* 餵嘴用詞跟教練場景設定同一套 */
+      const PIECE_VALUES = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 0 };
+      const FILES = "abcdefgh";
+      const DIFFICULTIES = Object.freeze({
+        beginner: Object.freeze({ label: "入門", skill: 0, movetime: 200 }),
+        easy: Object.freeze({ label: "初級", skill: 3, movetime: 400 }),
+        medium: Object.freeze({ label: "中級", skill: 8, movetime: 800 }),
+        hard: Object.freeze({ label: "困難", skill: 15, movetime: 1200 })
+      });
+      const STORE_PREFIX = "publicEchecs_";
+      const SETTINGS_KEY = STORE_PREFIX + "settings_v1";
+      /* 棋室大廳共用鑰匙（chambre）：同 origin 各房共讀；updatedAt 新的贏，本頁存檔同時回寫（欄位定死，三頁契約；playerSkill 等本頁專屬欄留在自己的鍵） */
+      const CHAMBRE_KEY = "chambre_settings_v1";
+      const CHAMBRE_FIELDS = ["endpoint","apiKey","model","characterName","characterDescription","playerName","avatarDataUrl","playerAvatarDataUrl"];
+      function writeSettings() {
+        settings.updatedAt = Date.now();
+        safeSet(SETTINGS_KEY,JSON.stringify(settings));
+        const shared = { v: 1 };
+        for (const field of CHAMBRE_FIELDS) shared[field] = settings[field] ?? "";
+        shared.updatedAt = settings.updatedAt;
+        safeSet(CHAMBRE_KEY,JSON.stringify(shared));
+      }
+      const SAVE_KEY = STORE_PREFIX + "save_v1";
+      const CHAT_KEY = STORE_PREFIX + "chat_v1";
+      const RECORD_KEY = STORE_PREFIX + "records_v1";
+      const GAMES_KEY = "echecsGames_v1";
+      const COACH_ENABLED_KEY = STORE_PREFIX + "coachEnabled_v1";
+      const CHAT_CAP = 100;
+      const COACH_TIMEOUT_MS = 20000;
+      const ENGINE_MOVE_DELAY_MS = 600;
+      const KAOMOJI = Object.freeze(["( ´ ▽ ` )", "(￣▽￣)", "(・ω・)", "(¬_¬)", "(ง •̀_•́)ง", "(｡•̀ᴗ-)✧", "(╯°□°）╯", "(づ｡◕‿‿◕｡)づ"]);
+      function safeGet(key) { try { return localStorage.getItem(key); } catch (_error) { return null; } }
+      function safeSet(key,value) { try { localStorage.setItem(key,value); return true; } catch (_error) { return false; } }
+      function readJson(key,fallback) { try { const value = JSON.parse(safeGet(key) || "null"); return value ?? fallback; } catch (_error) { return fallback; } }
+      function defaultSettings() { return { endpoint: "", apiKey: "", model: "", characterName: "", characterDescription: "", playerName: "你", playerSkill: "beginner", avatarDataUrl: "", playerAvatarDataUrl: "" }; }
+      function readSettings() {
+        const own = { ...defaultSettings(), ...readJson(SETTINGS_KEY,{}) };
+        const shared = readJson(CHAMBRE_KEY,null);
+        if (shared && typeof shared === "object" && Number(shared.updatedAt || 0) > Number(own.updatedAt || 0)) {
+          for (const field of CHAMBRE_FIELDS) if (typeof shared[field] === "string") own[field] = shared[field];
+          own.updatedAt = Number(shared.updatedAt);
+        }
+        return own;
+      }
+      function settingsComplete(value = settings) { return Boolean(value.endpoint.trim() && value.apiKey.trim() && value.model.trim() && value.characterName.trim()); }
+      function localDay() { return new Date(Date.now() - new Date().getTimezoneOffset() * 60000 - 4 * 3600 * 1000).toISOString().slice(0,10); }
+      function blankRecords() { return { player: 0, character: 0, draw: 0 }; }
+      function readRecords() { const raw = readJson(RECORD_KEY,{}); const out = blankRecords(); for (const key of Object.keys(out)) if (Number.isInteger(raw?.[key]) && raw[key] >= 0) out[key] = raw[key]; return out; }
+      const boardElement = document.querySelector("#board");
+      const statusElement = document.querySelector("#status");
+      const turnBadge = document.querySelector("#turnBadge");
+      const historyElement = document.querySelector("#history");
+      const undoButton = document.querySelector("#undoButton");
+      const newGameButton = document.querySelector("#newGameButton");
+      const modeSelect = document.querySelector("#modeSelect");
+      const difficultySelect = document.querySelector("#difficultySelect");
+      const difficultyNote = document.querySelector("#difficultyNote");
+      const coachStage = document.querySelector("#coachStage");
+      const coachTools = document.querySelector("#coachTools");
+      const coachToggle = document.querySelector("#coachToggle");
+      const himBubbleStack = document.querySelector("#himBubbleStack");
+      const herBubbleStack = document.querySelector("#herBubbleStack");
+      const herAvatar = document.querySelector("#herAvatar");
+      const herAvatarFallback = document.querySelector("#herAvatarFallback");
+      const helpButton = document.querySelector("#helpButton");
+      const chatForm = document.querySelector("#chatForm");
+      const chatInput = document.querySelector("#chatInput");
+      const chatSendButton = document.querySelector("#chatSendButton");
+      const historyCount = document.querySelector("#historyCount");
+      const elements = Object.fromEntries(Array.from(document.querySelectorAll("[id]")).map(node => [node.id,node]));
+
+      let game = new Chess();
+      let selectedSquare = null;
+      let legalMoves = [];
+      let activeDifficulty = difficultySelect.value;
+      let engine = null;
+      let engineReady = false;
+      let engineThinking = false;
+      let engineFailed = false;
+      let engineTimer = null;
+      let engineStartedAt = 0;
+      let lastEngineReply = null;
+      let lastSearchEvalW = null;
+      let engineGeneration = 0;
+      let coachEnabled = readCoachEnabled();
+      let coachThinking = false;
+      let activeCoachController = null;
+      let coachTranscript = [];
+      let hintThinking = false;
+      let hintAskCount = 0;
+      let chatSending = false;
+      let evalHistory = [];
+      let lastCoachMove = null;
+      let postgameRequested = false;
+      let settings = readSettings();
+      let chatHistory = [];
+      let records = readRecords();
+      const engineCommandLog = [];
+      const coachRequestLog = [];
+
+      function restoreChat() {
+        const rows = readJson(CHAT_KEY,[]);
+        if (!Array.isArray(rows)) return;
+        chatHistory = rows.filter(row => row && (row.who === "him" || row.who === "you")).slice(-CHAT_CAP).map(row => ({ who: row.who, text: String(row.text || ""), d: String(row.d || localDay()) }));
+      }
+
+      function saveChat() {
+        safeSet(CHAT_KEY,JSON.stringify(chatHistory.filter(row => row.who === "him" || row.who === "you").slice(-CHAT_CAP).map(row => ({ who: row.who, text: row.text, d: row.d || localDay() }))));
+      }
+
+      function renderIdentity() {
+        const name = settings.characterName.trim() || "角色";
+        elements.himAvatarFallback.textContent = Array.from(name)[0] || "角";
+        if (settings.avatarDataUrl) { elements.himAvatar.src = settings.avatarDataUrl; elements.himAvatar.hidden = false; elements.himAvatarFallback.hidden = true; }
+        else { elements.himAvatar.removeAttribute("src"); elements.himAvatar.hidden = true; elements.himAvatarFallback.hidden = false; }
+        if (settings.playerAvatarDataUrl) { elements.herAvatar.src = settings.playerAvatarDataUrl; elements.herAvatar.hidden = false; elements.herAvatarFallback.hidden = true; }
+        else { elements.herAvatar.removeAttribute("src"); elements.herAvatar.hidden = true; elements.herAvatarFallback.hidden = false; }
+        if (settings.avatarDataUrl) { elements.himAvatarPreview.src = settings.avatarDataUrl; elements.himAvatarPreview.hidden = false; elements.himPreviewEmpty.hidden = true; }
+        else { elements.himAvatarPreview.removeAttribute("src"); elements.himAvatarPreview.hidden = true; elements.himPreviewEmpty.hidden = false; }
+        if (settings.playerAvatarDataUrl) { elements.playerAvatarPreview.src = settings.playerAvatarDataUrl; elements.playerAvatarPreview.hidden = false; elements.playerPreviewEmpty.hidden = true; }
+        else { elements.playerAvatarPreview.removeAttribute("src"); elements.playerAvatarPreview.hidden = true; elements.playerPreviewEmpty.hidden = false; }
+        elements.setupNote.textContent = settingsComplete() ? name + " 已就座" : "設定完成後他會開口";
+        elements.setupNote.classList.toggle("ready",settingsComplete());
+      }
+
+      function flattenObject(value,prefix = "",out = []) {
+        if (value === null || value === undefined) return out;
+        if (typeof value !== "object") { out.push((prefix ? prefix + ": " : "") + String(value)); return out; }
+        if (Array.isArray(value)) { value.forEach((item,index) => flattenObject(item,prefix ? prefix + "[" + index + "]" : String(index),out)); return out; }
+        Object.entries(value).forEach(([key,item]) => flattenObject(item,prefix ? prefix + "." + key : key,out)); return out;
+      }
+
+      function normalizeCharacterCard(raw) {
+        if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("角色卡不是物件");
+        const card = raw.spec === "chara_card_v2" && raw.data && typeof raw.data === "object" ? raw.data : raw.data && raw.name === undefined && typeof raw.data === "object" ? raw.data : raw;
+        const standard = ["description","personality","scenario","mes_example"].some(key => typeof card[key] === "string");
+        if (!standard) return { name: String(card.character_name || card.char_name || card.title || card.name || "").trim(), description: flattenObject(card).join("\n") };
+        const blocks = [];
+        for (const key of ["description","personality","scenario"]) if (String(card[key] || "").trim()) blocks.push(String(card[key]).trim());
+        const sample = String(card.mes_example || "").trim().slice(0,600);
+        if (sample) blocks.push("【語氣樣本】\n" + sample);
+        return { name: String(card.name || card.character_name || "").trim(), description: blocks.join("\n\n") };
+      }
+
+      function bytesToText(bytes) { return new TextDecoder("utf-8",{ fatal: false }).decode(bytes); }
+      function base64ToBytes(text) { const binary = atob(String(text).replace(/\s/g,"")); return Uint8Array.from(binary,char => char.charCodeAt(0)); }
+      function parseTavernPngBytes(bytes) {
+        const signature = [137,80,78,71,13,10,26,10];
+        if (bytes.length < 8 || signature.some((value,index) => bytes[index] !== value)) throw new Error("不是 PNG 檔");
+        const view = new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength); let offset = 8;
+        while (offset + 12 <= bytes.length) {
+          const length = view.getUint32(offset); const type = bytesToText(bytes.slice(offset + 4,offset + 8)); const start = offset + 8, end = start + length;
+          if (end + 4 > bytes.length) throw new Error("PNG 區塊不完整");
+          if (type === "tEXt") {
+            const chunk = bytes.slice(start,end), zero = chunk.indexOf(0), key = zero >= 0 ? bytesToText(chunk.slice(0,zero)) : "";
+            if (key === "chara") return JSON.parse(bytesToText(base64ToBytes(bytesToText(chunk.slice(zero + 1)))));
+          }
+          offset = end + 4;
+        }
+        throw new Error("PNG 裡找不到 chara 角色卡");
+      }
+
+      function readFileBytes(file) { return file.arrayBuffer().then(buffer => new Uint8Array(buffer)); }
+      function readFileText(file) { return file.text(); }
+      async function resizeAvatar(file,maxSize = 256) {
+        let bitmap = null;
+        try { bitmap = await createImageBitmap(file); } catch (_error) { bitmap = null; }
+        if (!bitmap) {
+          const dataUrl = await new Promise((resolve,reject) => { const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.onerror = () => reject(new Error("讀檔失敗")); reader.readAsDataURL(file); });
+          bitmap = await new Promise((resolve,reject) => { const image = new Image(); image.onload = () => resolve(image); image.onerror = () => reject(new Error("圖片解不開，請改用 JPEG 或 PNG")); image.src = dataUrl; });
+        }
+        const width = bitmap.naturalWidth || bitmap.width, height = bitmap.naturalHeight || bitmap.height;
+        if (!width || !height) throw new Error("圖片尺寸讀不到");
+        const scale = Math.min(1,maxSize / Math.max(width,height));
+        const canvas = document.createElement("canvas"); canvas.width = Math.max(1,Math.round(width * scale)); canvas.height = Math.max(1,Math.round(height * scale));
+        canvas.getContext("2d").drawImage(bitmap,0,0,canvas.width,canvas.height);
+        const out = canvas.toDataURL("image/jpeg",0.85);
+        if (!out || out.length < 100) throw new Error("縮圖輸出失敗");
+        return out;
+      }
+
+      function applyParsedCard(parsed,avatarDataUrl = "",avatarProvided = false) {
+        elements.characterNameInput.value = parsed.name || "";
+        elements.characterDescriptionInput.value = parsed.description || "";
+        settings.characterName = elements.characterNameInput.value;
+        settings.characterDescription = elements.characterDescriptionInput.value;
+        if (avatarProvided) settings.avatarDataUrl = String(avatarDataUrl || "");
+        persistSettings();
+        return { kind: "card", name: settings.characterName, description: settings.characterDescription, avatarStored: Boolean(settings.avatarDataUrl) };
+      }
+
+      function importMemoryPackage(raw) {
+        const rows = Array.isArray(raw.chat) ? raw.chat : [];
+        chatHistory = rows.filter(row => row && (row.who === "you" || row.who === "him")).slice(-CHAT_CAP).map(row => ({ who: row.who, text: String(row.text || ""), d: String(row.d || localDay()) }));
+        const games = Array.isArray(raw.games) ? raw.games.slice(-30) : [];
+        safeSet(GAMES_KEY,JSON.stringify(games));
+        records = blankRecords();
+        for (const key of Object.keys(records)) if (Number.isInteger(raw?.records?.[key]) && raw.records[key] >= 0) records[key] = raw.records[key];
+        safeSet(RECORD_KEY,JSON.stringify(records));
+        saveChat();
+        return { kind: "memory", chatCount: chatHistory.length, gameCount: games.length };
+      }
+
+      function importJsonPayload(raw) {
+        if (raw?.type === "echecs_memory_v1") return importMemoryPackage(raw);
+        if (raw?.type === "echecs_card_v1") return applyParsedCard({ name: String(raw.name || ""), description: String(raw.description || "") },String(raw.avatarDataUrl || ""),true);
+        return applyParsedCard(normalizeCharacterCard(raw));
+      }
+
+      async function parseCardFile(file) {
+        const lower = String(file.name || "").toLowerCase(); let parsed, avatar = "";
+        if (lower.endsWith(".png") || file.type === "image/png") { const bytes = await readFileBytes(file); parsed = normalizeCharacterCard(parseTavernPngBytes(bytes)); avatar = await resizeAvatar(file); return applyParsedCard(parsed,avatar,true); }
+        if (lower.endsWith(".json") || file.type === "application/json") return importJsonPayload(JSON.parse(await readFileText(file)));
+        if (lower.endsWith(".md") || lower.endsWith(".txt") || file.type.startsWith("text/")) parsed = { name: "", description: await readFileText(file) };
+        else throw new Error("不支援的檔案格式");
+        return applyParsedCard(parsed);
+      }
+
+      function downloadJson(payload,filename) {
+        const blob = new Blob([JSON.stringify(payload,null,2)],{ type: "application/json;charset=utf-8" });
+        const url = URL.createObjectURL(blob), link = document.createElement("a");
+        link.href = url; link.download = filename; document.body.append(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url),0);
+        return filename;
+      }
+
+      function cardPackage() { persistSettings(); return { type: "echecs_card_v1", name: settings.characterName, description: settings.characterDescription, avatarDataUrl: settings.avatarDataUrl || "" }; }
+      function memoryPackage() { return { type: "echecs_memory_v1", games: readJson(GAMES_KEY,[]).slice(-30), chat: chatHistory.slice(-CHAT_CAP), records: { ...records } }; }
+      function exportCard() { const payload = cardPackage(), name = (payload.name.trim() || "角色").replace(/[\\/:*?"<>|]/g,"_"); return downloadJson(payload,name + "_卡.json"); }
+      function exportMemory() { const stamp = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0,10).replace(/-/g,""); return downloadJson(memoryPackage(),"Échecs_記憶_" + stamp + ".json"); }
+
+      async function setAvatarFromFile(file,key) {
+        if (!file || !String(file.type || "").startsWith("image/")) throw new Error("請選擇圖片檔");
+        const dataUrl = await resizeAvatar(file);
+        settings[key] = dataUrl;
+        writeSettings();
+        renderIdentity();
+        return settings[key];
+      }
+
+      function formToSettings() {
+        return { ...settings, endpoint: elements.endpointInput.value.trim().replace(/\/+$/,"") , apiKey: elements.apiKeyInput.value.trim(), model: elements.modelInput.value.trim(), characterName: elements.characterNameInput.value.trim(), characterDescription: elements.characterDescriptionInput.value, playerName: elements.playerNameInput.value.trim() || "你", playerSkill: elements.playerSkillInput.value === "experienced" ? "experienced" : "beginner" };
+      }
+
+      function settingsToForm() {
+        elements.endpointInput.value = settings.endpoint;
+        elements.endpointInput.placeholder = "https:" + "//generativelanguage.googleapis.com/v1beta/openai";
+        elements.apiKeyInput.value = settings.apiKey;
+        elements.modelInput.value = settings.model;
+        elements.characterNameInput.value = settings.characterName;
+        elements.characterDescriptionInput.value = settings.characterDescription;
+        elements.playerNameInput.value = settings.playerName || "你";
+        elements.playerSkillInput.value = settings.playerSkill === "experienced" ? "experienced" : "beginner";
+      }
+
+      function persistSettings() {
+        const wasComplete = settingsComplete();
+        settings = formToSettings();
+        writeSettings();
+        renderIdentity();
+        if (!wasComplete && settingsComplete()) setTimeout(() => void askCoach("opening",{ moveNo: currentMoveNo(), summary: "設定完成，角色剛坐到棋桌對面" }),0);
+      }
+
+      function clearAllData(skipConfirm = false) {
+        if (!skipConfirm && !confirm("清除本站儲存的金鑰、角色卡、頭像、棋局、對話、講評與戰績？")) return false;
+        const keys = [];
+        for (let index = 0; index < localStorage.length; index += 1) { const key = localStorage.key(index); if (key?.startsWith(STORE_PREFIX) || key === GAMES_KEY) keys.push(key); }
+        keys.forEach(key => localStorage.removeItem(key));
+        try { localStorage.removeItem(CHAMBRE_KEY); } catch (_error) {}
+        cancelCoachRequest(); settings = defaultSettings(); chatHistory = []; records = blankRecords(); settingsToForm(); renderIdentity(); startNewGame(); elements.cardStatus.textContent = "本站 Échecs 資料已清除。"; elements.avatarStatus.textContent = "頭像已清除。";
+        return true;
+      }
+
+      function endpointPath(suffix) { return settings.endpoint.trim().replace(/\/+$/,"") + suffix; }
+      async function loadModels() {
+        persistSettings(); elements.modelStatus.textContent = "正在撈清單…"; elements.modelSelect.hidden = true; elements.modelSelect.replaceChildren();
+        if (!settings.endpoint || !settings.apiKey) { elements.modelStatus.textContent = "撈不到，請手填"; return false; }
+        const controller = new AbortController(), timer = setTimeout(() => controller.abort(),COACH_TIMEOUT_MS);
+        try {
+          const response = await fetch(endpointPath("/models"),{ headers: { Authorization: "Bearer " + settings.apiKey }, signal: controller.signal });
+          if (!response.ok) throw new Error("bad response");
+          const data = await response.json(), rows = Array.isArray(data?.data) ? data.data : Array.isArray(data?.models) ? data.models : [];
+          const names = rows.map(row => String(typeof row === "string" ? row : row.id || row.name || "").replace(/^models\//,"")).filter(Boolean);
+          if (!names.length) throw new Error("empty");
+          const placeholder = document.createElement("option"); placeholder.value = ""; placeholder.textContent = "從清單挑一個模型…"; placeholder.disabled = true; placeholder.selected = true;
+          elements.modelSelect.replaceChildren(placeholder,...names.map(name => { const option = document.createElement("option"); option.value = name; option.textContent = name; return option; }));
+          elements.modelSelect.hidden = false; elements.modelStatus.textContent = "找到 " + names.length + " 個模型，從下拉挑或手填。";
+          return names;
+        } catch (_error) { elements.modelStatus.textContent = "撈不到，請手填"; return false; }
+        finally { clearTimeout(timer); }
+      }
+
+      async function handleImportInput(input) {
+        const file = input.files?.[0]; if (!file) return null;
+        elements.cardStatus.textContent = "正在辨識匯入檔…";
+        try {
+          const result = await parseCardFile(file);
+          elements.cardStatus.textContent = result.kind === "memory" ? "已還原 " + result.chatCount + " 句對話與 " + result.gameCount + " 局講評。" : "已載入" + (result.name ? "「" + result.name + "」" : "文字角色卡") + "。";
+          return result;
+        } catch (error) { elements.cardStatus.textContent = "匯入失敗：" + error.message; return null; }
+        finally { input.value = ""; }
+      }
+
+      function sideName(color) {
+        return color === "w" ? "白方" : "黑方";
+      }
+
+      function squareName(fileIndex, rank) {
+        return FILES[fileIndex] + rank;
+      }
+
+      function getEndMessage() {
+        if (game.in_checkmate()) return sideName(game.turn() === "w" ? "b" : "w") + "獲勝（將死）";
+        if (game.in_stalemate()) return "和局（逼和：無合法步可走）";
+        if (game.in_threefold_repetition()) return "和局（三次重複局面）";
+        if (game.insufficient_material()) return "和局（子力不足）";
+        if (game.in_draw()) return "和局（五十回合規則）";
+        return "對局結束（和局）";
+      }
+
+      function isComputerMode() {
+        return modeSelect.value === "computer";
+      }
+
+      function isBoardLocked() {
+        if (!isComputerMode() || engineFailed) return false;
+        return !engineReady || engineThinking || hintThinking || game.turn() === "b";
+      }
+
+      function currentMoveNo() {
+        return Math.floor(game.history().length / 2) + 1;
+      }
+
+      function latestAutomaticCoachMove() {
+        return coachTranscript.reduce((latest, entry) => (
+          entry.who === "him" && entry.trigger !== "hint" && entry.trigger !== "chat" &&
+          Number.isInteger(entry.moveNo) && (latest === null || entry.moveNo > latest) ? entry.moveNo : latest
+        ), null);
+      }
+
+      function readCoachEnabled() {
+        try {
+          return localStorage.getItem(COACH_ENABLED_KEY) !== "false";
+        } catch (_error) {
+          return true;
+        }
+      }
+
+      function rememberCoachEnabled() {
+        try {
+          localStorage.setItem(COACH_ENABLED_KEY, String(coachEnabled));
+        } catch (_error) {
+          // 偏好存不下時仍可繼續下棋。
+        }
+      }
+
+      function clearSavedGame() {
+        try {
+          localStorage.removeItem(SAVE_KEY);
+        } catch (_error) {
+          // 儲存空間不可用時不阻擋新局。
+        }
+      }
+
+      function saveGame() {
+        const state = {
+          fen: game.fen(),
+          sanHistory: game.history(),
+          mode: modeSelect.value,
+          difficulty: activeDifficulty,
+          coachTranscript,
+          evalHistory,
+          ts: Date.now()
+        };
+        try {
+          localStorage.setItem(SAVE_KEY, JSON.stringify(state));
+        } catch (_error) {
+          // 暫存失敗不影響棋局。
+        }
+      }
+
+      function replayMoves(sanHistory) {
+        const replayed = new Chess();
+        for (const san of sanHistory) {
+          if (typeof san !== "string" || !replayed.move(san)) return null;
+        }
+        return replayed;
+      }
+
+      function restoreSavedGame() {
+        let saved;
+        try {
+          saved = JSON.parse(localStorage.getItem(SAVE_KEY) || "null");
+        } catch (_error) {
+          return false;
+        }
+        if (!saved || !Array.isArray(saved.sanHistory)) return false;
+        if (!Object.hasOwn(DIFFICULTIES, saved.difficulty)) return false;
+        if (saved.mode !== "computer" && saved.mode !== "two-player") return false;
+
+        const replayed = replayMoves(saved.sanHistory);
+        if (!replayed || replayed.game_over() || replayed.fen() !== saved.fen) return false;
+
+        game = replayed;
+        modeSelect.value = saved.mode;
+        difficultySelect.value = saved.difficulty;
+        activeDifficulty = saved.difficulty;
+        coachTranscript = Array.isArray(saved.coachTranscript)
+          ? saved.coachTranscript
+              .filter(entry => entry && (entry.who === "him" || entry.who === "her" || entry.who === "sys") && typeof entry.text === "string")
+            .map(entry => ({
+              who: entry.who,
+              text: entry.text,
+              kind: typeof entry.kind === "string" ? entry.kind : null,
+              moveNo: Number.isInteger(entry.moveNo) ? entry.moveNo : null,
+              trigger: typeof entry.trigger === "string" ? entry.trigger : null,
+              shownAt: -1e9   // 還原的舊句一律標陳年：泡泡常態只留最後一句（頁面時鐘跨載入失義）
+            }))
+          : [];
+        evalHistory = Array.isArray(saved.evalHistory)
+          ? saved.evalHistory.filter(entry => entry && Number.isInteger(entry.moveNo) && Number.isFinite(entry.evalW))
+            .map(entry => ({
+              moveNo: entry.moveNo,
+              san: typeof entry.san === "string" ? entry.san : "",
+              evalW: entry.evalW,
+              prevEvalW: Number.isFinite(entry.prevEvalW) ? entry.prevEvalW : 0,
+              drop: Number.isFinite(entry.drop) ? entry.drop : 0,
+              summary: typeof entry.summary === "string" ? entry.summary : ""
+            }))
+          : [];
+        lastCoachMove = latestAutomaticCoachMove();
+        return true;
+      }
+
+      function updateStatus() {
+        const turn = sideName(game.turn());   // 後面的狀態文案還要用它——上一版手滑砍掉炸了整個狀態更新，引以為戒
+        turnBadge.textContent = turn;   // 徽章只印「白方/黑方」兩字（業主 08-28：反正大部分都在等我）
+        statusElement.className = "";
+
+        if (game.game_over()) {
+          statusElement.textContent = getEndMessage();
+          statusElement.classList.add("game-over");
+        } else if (engineFailed) {
+          statusElement.textContent = "引擎沒回手";
+          statusElement.classList.add("check");
+        } else if (isComputerMode() && engineThinking) {
+          statusElement.textContent = "對方思考中…";
+        } else if (isComputerMode() && !engineReady) {
+          statusElement.textContent = "引擎準備中…";
+        } else if (game.in_check()) {
+          statusElement.textContent = turn + "回合 · 將軍！";
+          statusElement.classList.add("check");
+        } else {
+          statusElement.textContent = turn + "回合";
+        }
+      }
+
+      function updateHistory() {
+        const moves = game.history();
+        historyElement.replaceChildren();
+        historyCount.textContent = String(moves.length);
+
+        if (moves.length === 0) {
+          const empty = document.createElement("p");
+          empty.className = "empty-history";
+          empty.textContent = "尚未走子";
+          historyElement.append(empty);
+        } else {
+          for (let i = 0; i < moves.length; i += 2) {
+            const row = document.createElement("div");
+            row.className = "move-row";
+            const number = document.createElement("span");
+            number.className = "move-number";
+            number.textContent = (i / 2 + 1) + ".";
+            const whiteMove = document.createElement("span");
+            whiteMove.textContent = moves[i];
+            const blackMove = document.createElement("span");
+            blackMove.textContent = moves[i + 1] || "";
+            row.append(number, whiteMove, blackMove);
+            historyElement.append(row);
+          }
+          historyElement.scrollTop = historyElement.scrollHeight;
+        }
+
+        undoButton.disabled = moves.length === 0;
+      }
+
+      function canRequestHint() {
+        return isComputerMode() && coachEnabled && engineReady && !engineThinking && !hintThinking &&
+          activeCoachController === null && !engineFailed && !game.game_over() && game.turn() === "w";
+      }
+
+      function renderCoach() {
+        const computerMode = isComputerMode();
+        coachStage.classList.toggle("two-player", !computerMode);
+        coachToggle.hidden = !computerMode;   // 開關住到標題列了（08-28 業主版型），跟回合牌當鄰居
+        coachToggle.setAttribute("aria-checked", String(coachEnabled));
+        coachToggle.textContent = "教練";   // 開關狀態用顏色講（暗＝關），字面不囉嗦（業主 08-28）
+        helpButton.disabled = !canRequestHint();
+        helpButton.textContent = hintThinking ? "找路中" : "求救";
+        chatForm.hidden = !computerMode || !coachEnabled;
+        chatInput.disabled = chatSending || hintThinking || activeCoachController !== null;
+        chatSendButton.disabled = chatSending || hintThinking || activeCoachController !== null;
+        himBubbleStack.replaceChildren();
+        herBubbleStack.replaceChildren();
+
+        coachStage.classList.toggle("coach-off", !coachEnabled);
+        // 泡泡政策（業主 09-02 實玩點單）：保留 8 秒內最近 3 句，常態兩邊各留最後一句
+        let visibleEntries = [];
+        const talk = coachTranscript.filter((e) => e.who !== "sys");   // sys=時間軸事件，不上泡泡
+        if (coachEnabled && talk.length) {
+          const now = performance.now();
+          const recent = talk.slice(-3).filter((e) => now - (e.shownAt || 0) < 8000);
+          const lastHer = talk.filter((e) => e.who === "her").at(-1);
+          const lastHim = talk.filter((e) => e.who === "him").at(-1);
+          const visibleSet = new Set([...recent, lastHer, lastHim].filter(Boolean));
+          visibleEntries = talk.filter((e) => visibleSet.has(e));
+          if (recent.length) {   /* 只有熱鬧期泡泡需要到點收攏；常態雙留不必無限重排 */
+            clearTimeout(renderCoach._fadeTimer);
+            renderCoach._fadeTimer = setTimeout(renderCoach, 8200);
+          }
+        }
+        for (const entry of visibleEntries) {
+          const bubble = document.createElement("div");
+          bubble.className = "coach-bubble " + entry.who + (entry._animated ? "" : " pop");
+          entry._animated = true;
+          bubble.textContent = entry.text;
+          (entry.who === "her" ? herBubbleStack : himBubbleStack).append(bubble);
+        }
+
+        if (coachThinking && computerMode && coachEnabled) {
+          const thinking = document.createElement("div");
+          thinking.className = "coach-thinking";
+          thinking.setAttribute("aria-label", "對面在想話");
+          const dots = document.createElement("span");
+          dots.className = "thinking-dots";
+          dots.setAttribute("aria-label", "…");
+          dots.innerHTML = "<i></i><i></i><i></i>";
+          thinking.append(dots);
+          himBubbleStack.append(thinking);
+        }
+      }
+
+      // 將軍可視化（2026-08-28 業主：「被將軍還不知道哪裡將軍」）：找出攻擊源與攻擊路線
+      function findCheckSquares() {
+        if (!game.in_check()) return null;
+        const defender = game.turn();
+        const files = "abcdefgh";
+        let kingSquare = null;
+        const enemies = [];
+        for (let r = 1; r <= 8; r += 1) {
+          for (let f = 0; f < 8; f += 1) {
+            const sq = files[f] + r;
+            const p = game.get(sq);
+            if (!p) continue;
+            if (p.color === defender && p.type === "k") kingSquare = sq;
+            else if (p.color !== defender) enemies.push({ sq, p, f, r });
+          }
+        }
+        if (!kingSquare) return null;
+        const kf = files.indexOf(kingSquare[0]), kr = Number(kingSquare[1]);
+        const sources = [], path = [];
+        const clearRay = (f0, r0, df, dr) => {
+          const cells = [];
+          let f = f0 + df, r = r0 + dr;
+          while (f !== kf || r !== kr) {
+            if (f < 0 || f > 7 || r < 1 || r > 8) return null;
+            if (game.get(files[f] + r)) return null;
+            cells.push(files[f] + r);
+            f += df; r += dr;
+          }
+          return cells;
+        };
+        for (const e of enemies) {
+          const df = Math.sign(kf - e.f), dr = Math.sign(kr - e.r);
+          const adf = Math.abs(kf - e.f), adr = Math.abs(kr - e.r);
+          let hit = null;
+          if (e.p.type === "n") { if ((adf === 1 && adr === 2) || (adf === 2 && adr === 1)) hit = []; }
+          else if (e.p.type === "p") { if (adr === 1 && adf === 1 && ((e.p.color === "w" && kr === e.r + 1) || (e.p.color === "b" && kr === e.r - 1))) hit = []; }
+          else if (e.p.type === "k") { if (adf <= 1 && adr <= 1) hit = []; }
+          else {
+            const straight = adf === 0 || adr === 0, diag = adf === adr;
+            if ((e.p.type === "r" && straight) || (e.p.type === "b" && diag) || (e.p.type === "q" && (straight || diag))) {
+              hit = clearRay(e.f, e.r, df, dr);
+            }
+          }
+          if (hit) { sources.push(e.sq); path.push(...hit); }
+        }
+        return sources.length ? { king: kingSquare, sources, path } : null;
+      }
+
+      function renderBoard() {
+        const position = game.board();
+        const boardLocked = isBoardLocked();
+        const checkInfo = findCheckSquares();
+        boardElement.replaceChildren();
+        boardElement.classList.toggle("locked", boardLocked);
+        boardElement.setAttribute("aria-busy", String(engineThinking));
+
+        for (let row = 0; row < 8; row += 1) {
+          const rank = 8 - row;
+          for (let fileIndex = 0; fileIndex < 8; fileIndex += 1) {
+            const square = squareName(fileIndex, rank);
+            const piece = position[row][fileIndex];
+            const legalMove = legalMoves.find(move => move.to === square);
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "square" + ((row + fileIndex) % 2 ? " dark" : "");
+            button.dataset.square = square;
+            button.setAttribute("role", "gridcell");
+            button.disabled = boardLocked;
+
+            if (piece) {
+              const pieceElement = document.createElement("span");
+              pieceElement.className = "piece " + (piece.color === "w" ? "white" : "black");
+              pieceElement.textContent = PIECES[piece.color][piece.type];
+              pieceElement.setAttribute("aria-hidden", "true");
+              button.append(pieceElement);
+              button.setAttribute("aria-label", square + "，" + sideName(piece.color) + PIECE_NAMES[piece.type]);
+              if (piece.color === game.turn() && !game.game_over() && !boardLocked) button.classList.add("selectable");
+            } else {
+              button.setAttribute("aria-label", square + "，空格");
+            }
+
+            if (checkInfo) {
+              if (square === checkInfo.king) button.classList.add("check-king");
+              if (checkInfo.sources.includes(square)) button.classList.add("check-source");
+              if (checkInfo.path.includes(square)) button.classList.add("check-path");
+            }
+            if (square === selectedSquare) button.classList.add("selected");
+            if (legalMove) {
+              button.classList.add("legal");
+              if (legalMove.captured) button.classList.add("capture");
+              button.setAttribute("aria-label", button.getAttribute("aria-label") + "，合法落點");
+            }
+
+            if (rank === 1) {
+              const fileLabel = document.createElement("span");
+              fileLabel.className = "coord file";
+              fileLabel.textContent = FILES[fileIndex];
+              fileLabel.setAttribute("aria-hidden", "true");
+              button.append(fileLabel);
+            }
+            if (fileIndex === 0) {
+              const rankLabel = document.createElement("span");
+              rankLabel.className = "coord rank";
+              rankLabel.textContent = rank;
+              rankLabel.setAttribute("aria-hidden", "true");
+              button.append(rankLabel);
+            }
+
+            boardElement.append(button);
+          }
+        }
+      }
+
+      function render() {
+        renderBoard();
+        updateStatus();
+        updateHistory();
+        renderCoach();
+      }
+
+      function clearSelection() {
+        selectedSquare = null;
+        legalMoves = [];
+      }
+
+      function clearEngineTimer() {
+        if (engineTimer !== null) {
+          window.clearTimeout(engineTimer);
+          engineTimer = null;
+        }
+      }
+
+      function cancelCoachRequest() {
+        if (activeCoachController) activeCoachController.abort();
+        activeCoachController = null;
+        coachThinking = false;
+      }
+
+      function sendEngineCommand(command) {
+        if (!engine) return;
+        engineCommandLog.push({ command, at: performance.now() });
+        console.info("[Stockfish UCI] " + command);
+        engine.postMessage(command);
+      }
+
+      function stopEngine() {
+        engineGeneration += 1;
+        clearEngineTimer();
+        cancelCoachRequest();
+        if (engine) engine.terminate();
+        engine = null;
+        engineReady = false;
+        engineThinking = false;
+        hintThinking = false;
+        lastSearchEvalW = null;
+      }
+
+      function failEngine() {
+        engineGeneration += 1;
+        clearEngineTimer();
+        cancelCoachRequest();
+        if (engine) engine.terminate();
+        engine = null;
+        engineReady = false;
+        engineThinking = false;
+        hintThinking = false;
+        engineFailed = true;
+        clearSelection();
+        render();
+      }
+
+      function parseEvalW(message) {
+        const score = /\bscore\s+(cp|mate)\s+(-?\d+)/.exec(message);
+        if (!score) return null;
+        const value = Number(score[2]);
+        if (!Number.isFinite(value)) return null;
+        if (score[1] === "cp") return -value;
+        if (value > 0) return -10000;
+        if (value < 0) return 10000;
+        return 0;
+      }
+
+      function getGameResult(targetGame) {
+        if (!targetGame.game_over()) return undefined;
+        if (!targetGame.in_checkmate()) return "draw";
+        return targetGame.turn() === "w" ? "engine" : "player";
+      }
+
+      function makeBlunderSummary(drop, captured) {
+        const pawns = Math.max(2, Math.round(drop / 10) / 10);
+        let summary = "這步之後局面掉了約" + pawns.toFixed(pawns % 1 === 0 ? 0 : 1) + "個兵的價值";
+        if (captured && captured !== "p" && captured !== "k") summary += "，等於送了" + PIECE_NAMES[captured];
+        return summary;
+      }
+
+      // ---------- 盤況翻譯官（2026-09-02，牌桌腦暴帳§五）----------
+      // 「會看錯位置」＝嘴自己讀棋譜代號腦補座標的病。修法＝程式讀盤翻成中文事實清單餵嘴，
+      // 嘴只評論已解讀的事實。純函式零模型成本；攻擊判定自算（chess.js 0.13.4 沒開 attackers API）。
+
+      function attackersOf(targetGame, square, byColor) {
+        const board = targetGame.board();
+        const file = FILES.indexOf(square[0]);
+        const rank = Number(square[1]);
+        const at = (f, r) => (f < 0 || f > 7 || r < 1 || r > 8) ? null : board[8 - r][f];
+        const found = [];
+        const collect = (f, r, types) => {
+          const piece = at(f, r);
+          if (piece && piece.color === byColor && types.includes(piece.type)) found.push(piece.type);
+        };
+        const pawnRank = byColor === "w" ? rank - 1 : rank + 1;   /* 兵斜吃：白往上、黑往下 */
+        collect(file - 1, pawnRank, ["p"]);
+        collect(file + 1, pawnRank, ["p"]);
+        for (const [df, dr] of [[1, 2], [2, 1], [2, -1], [1, -2], [-1, -2], [-2, -1], [-2, 1], [-1, 2]]) collect(file + df, rank + dr, ["n"]);
+        for (let df = -1; df <= 1; df += 1) for (let dr = -1; dr <= 1; dr += 1) {
+          if (df || dr) collect(file + df, rank + dr, ["k"]);
+        }
+        for (const [df, dr, types] of [[1, 0, ["r", "q"]], [-1, 0, ["r", "q"]], [0, 1, ["r", "q"]], [0, -1, ["r", "q"]],
+                                       [1, 1, ["b", "q"]], [1, -1, ["b", "q"]], [-1, 1, ["b", "q"]], [-1, -1, ["b", "q"]]]) {
+          let f = file + df;
+          let r = rank + dr;
+          while (f >= 0 && f <= 7 && r >= 1 && r <= 8) {
+            const piece = at(f, r);
+            if (piece) {
+              if (piece.color === byColor && types.includes(piece.type)) found.push(piece.type);
+              break;
+            }
+            f += df;
+            r += dr;
+          }
+        }
+        return found;
+      }
+
+      function sideWord(color) {
+        return color === "w" ? "玩家" : "你";
+      }
+
+      function moveFact(verboseMove, mover, opponent) {
+        if (!verboseMove) return "";
+        const name = COACH_PIECE_NAMES[verboseMove.piece];
+        let fact;
+        if (verboseMove.flags.includes("k")) fact = mover + "短易位（國王移到 " + verboseMove.to + "）";
+        else if (verboseMove.flags.includes("q")) fact = mover + "長易位（國王移到 " + verboseMove.to + "）";
+        else if (verboseMove.captured) fact = mover + "用 " + verboseMove.from + " 的" + name + "吃掉" + opponent + " " + verboseMove.to + " 的" + COACH_PIECE_NAMES[verboseMove.captured] + (verboseMove.flags.includes("e") ? "（吃過路兵）" : "");
+        else fact = mover + "把 " + verboseMove.from + " 的" + name + "走到 " + verboseMove.to;
+        if (verboseMove.promotion) fact += "，升變成" + COACH_PIECE_NAMES[verboseMove.promotion];
+        if (verboseMove.san.endsWith("#")) fact += "，將死";
+        else if (verboseMove.san.endsWith("+")) fact += "，將軍";
+        return fact;
+      }
+
+      function evalFact(evalW) {
+        if (typeof evalW !== "number") return "";
+        if (evalW <= -9000) return "引擎判定：你（執黑）勝勢，已看到將死路線";
+        if (evalW >= 9000) return "引擎判定：玩家（執白）勝勢，已看到將死路線";
+        const pawns = Math.abs(evalW) / 100;
+        if (pawns < 0.6) return "引擎判定：局面大致均勢";
+        const grade = pawns < 1.5 ? "稍佔上風" : pawns < 3 ? "明顯佔優" : "大幅領先";
+        return "引擎判定：" + (evalW > 0 ? "玩家" : "你") + grade + "（約 " + pawns.toFixed(1) + " 個兵的價值）";
+      }
+
+      function materialFact(targetGame) {
+        let diff = 0;
+        for (const row of targetGame.board()) for (const piece of row) {
+          if (piece) diff += (piece.color === "w" ? 1 : -1) * PIECE_VALUES[piece.type];
+        }
+        if (diff === 0) return "子力：雙方相當";
+        return "子力：" + (diff > 0 ? "玩家" : "你") + "多了約 " + Math.abs(diff) + " 個兵的價值";
+      }
+
+      function threatFacts(targetGame) {
+        const facts = [];
+        const board = targetGame.board();
+        for (const color of ["w", "b"]) {
+          const foe = color === "w" ? "b" : "w";
+          const threatened = [];
+          for (let rowIndex = 0; rowIndex < 8; rowIndex += 1) for (let fileIndex = 0; fileIndex < 8; fileIndex += 1) {
+            const piece = board[rowIndex][fileIndex];
+            if (!piece || piece.color !== color || piece.type === "k") continue;
+            const square = FILES[fileIndex] + (8 - rowIndex);
+            const attackers = attackersOf(targetGame, square, foe);
+            if (!attackers.length) continue;
+            const defenders = attackersOf(targetGame, square, color);
+            const cheapest = Math.min(...attackers.map(type => type === "k" ? 99 : PIECE_VALUES[type]));   /* 王吃有保護的子＝送王，不算贏吃 */
+            if (!defenders.length) threatened.push({ square, type: piece.type, value: PIECE_VALUES[piece.type], why: "沒有子保護" });
+            else if (cheapest < PIECE_VALUES[piece.type]) threatened.push({ square, type: piece.type, value: PIECE_VALUES[piece.type], why: "被更小的子瞄著（換過去會虧）" });
+          }
+          threatened.sort((a, b) => b.value - a.value);
+          for (const threat of threatened.slice(0, 2)) {
+            facts.push("威脅：" + sideWord(color) + " " + threat.square + " 的" + COACH_PIECE_NAMES[threat.type] + "正被" + sideWord(foe) + "攻擊，" + threat.why);
+          }
+        }
+        return facts;
+      }
+
+      function zoneWord(square) {
+        return Number(square[1]) <= 4 ? "在白方這半邊（玩家的半場）" : "在黑方這半邊（你的半場）";
+      }
+
+      function landingFact(targetGame, verboseMove, mover, opponent) {
+        if (!verboseMove) return "";
+        const piece = targetGame.get(verboseMove.to);
+        if (!piece || piece.color !== verboseMove.color) return "";
+        const foe = verboseMove.color === "w" ? "b" : "w";
+        const attackers = attackersOf(targetGame, verboseMove.to, foe);
+        const defenders = attackersOf(targetGame, verboseMove.to, verboseMove.color);
+        const attackText = attackers.length ? "正被" + opponent + "的" + attackers.map(type => COACH_PIECE_NAMES[type]).join("、") + "攻擊" : "沒有被任何子攻擊";
+        const defendText = defenders.length ? "有 " + defenders.length + " 顆子保護" : "沒有子保護";
+        return mover + "剛走到 " + verboseMove.to + " 的" + COACH_PIECE_NAMES[piece.type] + "：" + zoneWord(verboseMove.to) + "，" + attackText + "，" + defendText;
+      }
+
+      function boardFacts(targetGame, evalW) {
+        const facts = [materialFact(targetGame)];
+        const evalLine = evalFact(evalW);
+        if (evalLine) facts.push(evalLine);
+        if (targetGame.in_checkmate()) facts.push("現在" + sideWord(targetGame.turn()) + "被將死，對局結束");
+        else if (targetGame.in_check()) facts.push("現在" + sideWord(targetGame.turn()) + "的國王正被將軍");
+        const verbose = targetGame.history({ verbose: true });
+        const playerLanding = landingFact(targetGame, verbose.filter((_m, i) => i % 2 === 0).at(-1), "玩家", "你");
+        const hisLanding = landingFact(targetGame, verbose.filter((_m, i) => i % 2 === 1).at(-1), "你", "玩家");
+        if (playerLanding) facts.push(playerLanding);
+        if (hisLanding) facts.push(hisLanding);
+        facts.push(...threatFacts(targetGame));
+        return facts;
+      }
+
+      function lastRecordedEvalW() {
+        return evalHistory.length ? evalHistory.at(-1).evalW : null;
+      }
+
+      function payloadFor(trigger, details) {
+        const payload = {
+          trigger,
+          moveNo: details.moveNo,
+          lastSan: details.lastSan || "",
+          engineSan: details.engineSan || "",
+          difficulty: DIFFICULTIES[activeDifficulty].label,
+          summary: details.summary,
+          transcript: coachTranscript.filter(entry => entry.who !== "sys").slice(-12).map(entry => ({ who: entry.who, text: entry.text }))
+        };
+        if (typeof details.text === "string") payload.text = details.text;
+        if (typeof details.bestSan === "string") payload.bestSan = details.bestSan;
+        if (Array.isArray(details.facts) && details.facts.length) payload.facts = details.facts.slice(0, 10);
+        if (details.lastFact) payload.lastFact = details.lastFact;
+        if (details.engineFact) payload.engineFact = details.engineFact;
+        if (details.bestFact) payload.bestFact = details.bestFact;
+        if (Number.isInteger(details.askCount)) payload.askCount = details.askCount;
+        if (details.result) payload.result = details.result;
+        if (details.pgn !== undefined) payload.pgn = details.pgn;
+        if (details.blunders !== undefined) payload.blunders = details.blunders;
+        return payload;
+      }
+
+      function factsBlock(b) {
+        if (!Array.isArray(b.facts) || !b.facts.length) return "";
+        return "\n【盤況翻譯官小抄（程式讀盤翻好的事實，講局面以這份為準；禁自己憑棋譜代號腦補位置，禁逐條複誦；小抄沒列的威脅＝不存在，禁自己腦補「孤伶伶」「被盯著」「在誰的半場」——半場與攻防都在小抄裡）】\n- " + b.facts.slice(0,8).map(value => String(value).slice(0,120)).join("\n- ");
+      }
+
+      function pieceName(san) {
+        if (!san) return "";
+        return ({ K: "國王", Q: "皇后", R: "城堡", B: "主教", N: "騎士" })[san[0]] || "小兵";
+      }
+
+      function buildTrigger(trigger,extra = {}) {
+        const b = payloadFor(trigger,extra);
+        const mv = b.lastSan ? "第 " + b.moveNo + " 手玩家走了 " + b.lastSan + (b.lastFact ? "＝" + b.lastFact : "（動的是" + pieceName(b.lastSan) + "）") : "";
+        const reply = b.engineFact ? "你回手 " + (b.engineSan || "") + "＝" + b.engineFact + "；" : "";
+        if (trigger === "opening") return "【棋桌時機】玩家剛坐下來開了新的一局（電腦難度：" + (b.difficulty || "入門") + "，玩家執白先走）。跟玩家開場說句話。";
+        if (trigger === "good") return "【棋桌時機】" + mv + "，這步走得穩、沒虧（" + reply + "局勢：" + (b.summary || "大致均勢") + "）。誇玩家一句，順口點出這步好在哪（白話）。" + factsBlock(b);
+        if (trigger === "blunder") return "【棋桌時機】" + mv + "，這步虧大了——" + (b.summary || "送了子力或漏看威脅") + "（" + reply + "小抄裡有玩家漏看的威脅）。用你的方式讓玩家知道走壞了、問題出在哪；可以提一句想反悔就按悔棋。" + factsBlock(b);
+        if (trigger === "check-her") return "【棋桌時機】" + mv + "之後，" + reply + "玩家被將軍了。提醒玩家現在必須先救國王。" + factsBlock(b);
+        if (trigger === "check-you") return "【棋桌時機】" + mv + "，玩家將軍了你。回應這件事。" + factsBlock(b);
+        if (trigger === "gameover") {
+          const result = b.result === "player" ? "玩家贏了" : b.result === "engine" ? "玩家輸了（你這邊的電腦贏了）" : "和局";
+          return "【棋桌時機】這局結束：" + result + (b.lastFact ? "——最後一手：" + b.lastFact : "") + "。回應這個結果，一兩句。" + factsBlock(b);
+        }
+        if (trigger === "postgame") {
+          const winnerLine = b.result === "player" ? "玩家贏、你輸——最後那步將死是玩家走的" : b.result === "engine" ? "你贏、玩家輸——最後那步將死是你走的" : "和局";
+          const parts = ["【賽後講評（放寬到至多五句）】這局打完了（結果：" + winnerLine + "；共 " + (b.moveNo || "?") + " 手）。"];
+          if (b.pgn) {
+            const tokens = String(b.pgn).trim().split(/\s+/).filter(Boolean);
+            parts.push("棋譜（每手已標註是誰走的，以括號為準）：" + tokens.map((token,index) => token + "(" + (index % 2 === 0 ? "玩家" : "你") + ")").join(" "));
+          }
+          if (Array.isArray(b.blunders) && b.blunders.length) parts.push("玩家這局的虧手：" + b.blunders.map(item => "第" + item.moveNo + "手 " + item.san + "（" + (item.summary || "虧") + "）").join("、"));
+          else parts.push("這局玩家沒有明顯虧手。");
+          const past = readJson(GAMES_KEY,[]).slice(-3).map(row => String(row?.comment || "").trim()).filter(Boolean);
+          if (past.length) parts.push("【你之前幾局對玩家的講評（找找玩家有沒有重複犯的毛病，有就點出來；沒有就別硬掰）】\n" + past.join("\n---\n"));
+          parts.push("給玩家一段賽後講評：這局最值得記住的一件事（好的或壞的挑最重要的講）、如果有反覆犯的毛病點出來、最後留一句下局的期待。\n主詞校對（最高優先）：勝負與每一手的歸屬以【結果】行和棋譜括號為準——玩家輸的局禁寫成玩家將死你、你的手禁記到玩家頭上；你／玩家用反＝整段作廢。");
+          return parts.join("\n");
+        }
+        if (trigger === "hint") {
+          const best = b.bestFact ? b.bestFact + "（棋譜記法 " + (b.bestSan || "?") + "）" : (b.bestSan || "（引擎沒給）");
+          const base = "【求救】玩家按了求救鈕（第 " + b.moveNo + " 手，輪玩家走）。引擎認為此刻最好的一步是 " + best + "。";
+          if ((b.askCount || 1) >= 2) return base + "這是玩家這一手第二次求救了——直接告訴玩家怎麼走（白話講清楚哪顆子走去哪、為什麼），順口虧一句。" + factsBlock(b);
+          return base + "第一次求救別直接報答案：用一兩句把玩家的眼睛引去對的地方——點名該注意的那顆子或那個威脅、為什麼重要，讓玩家自己找到那步。" + factsBlock(b);
+        }
+        if (trigger === "chat") return "【棋桌閒聊】玩家邊下棋邊跟你說：" + JSON.stringify(String(b.text || "").slice(0,500)) + "（局面：第 " + b.moveNo + " 手，輪玩家走" + (b.lastSan ? "；玩家上一手：" + (b.lastFact || "走的是 " + b.lastSan) : "") + (b.engineSan ? "、你上一手：" + (b.engineFact || "回的是 " + b.engineSan) + "——別把你自己的棋算到玩家頭上" : "") + "）。回玩家的話——可以聊、可以順便講棋，但別自顧自上課。" + factsBlock(b);
+        return "【棋桌時機】" + mv + "。順著局面說句話。" + factsBlock(b);
+      }
+
+      function buildMessages(trigger,details = {}) {
+        const player = settings.playerName.trim() || "你";
+        const skillLine = settings.playerSkill === "experienced" ? "玩家會下棋；你只陪下不上課，講評照樣講，但別教規則" : "玩家是初學者；你會教，教的時候白話具體、一次只講一件事";
+        const scene = "【角色卡】\n角色名：" + settings.characterName.trim() + "\n" + (settings.characterDescription.trim() || "（角色卡沒有補充描述）") + "\n\n【棋桌場景】\n你是" + settings.characterName.trim() + "，正在跟" + player + "面對面下西洋棋，玩家執白、你執黑（你的棋由引擎代走，你負責看盤開口）。" + skillLine + "。棋子一律用中文講（國王、皇后、城堡、騎士、主教、小兵），格子代號偶爾點到可以，禁連發堆砌。相處模式只依角色卡，不自行預設關係。\n\n【輸出規則（最高優先）】\n- 你是角色本人，正在棋桌對面開口。輸出只有台詞本文，零其他。\n- 至多兩句（賽後講評放寬到至多五句）。一句能講完就一句。\n- 禁 markdown、表情符號、顏文字、引號包台詞、動作描寫與旁白。\n- 局面資訊是小抄：禁報評分數字、禁逐字複誦小抄。\n- 同一個梗不要重複。";
+        const messages = [{ role: "system", content: scene }];
+        for (const row of chatHistory.filter(entry => entry.who === "him").slice(-12)) messages.push({ role: "assistant", content: row.text });
+        messages.push({ role: "user", content: buildTrigger(trigger,details) });
+        return messages;
+      }
+
+      function postprocess(text,maxLines) {
+        const out = [];
+        for (let line of String(text || "").split("\n")) {
+          line = line.trim().replace(/^[-*>•]\s*/,"").replace(/^[「\"'“”]|[」\"'“”]$/g,"");
+          if (line) out.push(line);
+        }
+        return out.slice(0,maxLines);
+      }
+
+      async function askCoach(trigger, details) {
+        if (!isComputerMode() || !coachEnabled || !settingsComplete()) return false;
+        const payload = payloadFor(trigger, details);
+        const messages = buildMessages(trigger,details);
+        const controller = new AbortController();
+        const logEntry = {
+          trigger,
+          moveNo: details.moveNo,
+          request: JSON.parse(JSON.stringify(payload)),
+          url: endpointPath("/chat/completions"),
+          messages: JSON.parse(JSON.stringify(messages)),
+          startedAt: performance.now(),
+          ok: false,
+          lines: 0
+        };
+        coachRequestLog.push(logEntry);
+        activeCoachController = controller;
+        coachThinking = true;
+        renderCoach();
+        const timeout = window.setTimeout(() => controller.abort(), COACH_TIMEOUT_MS);
+
+        try {
+          const response = await fetch(logEntry.url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: "Bearer " + settings.apiKey.trim() },
+            body: JSON.stringify({ model: settings.model.trim(), messages, stream: false, max_tokens: trigger === "postgame" ? 700 : 400 }),
+            signal: controller.signal
+          });
+          if (!response.ok) return false;
+          const data = await response.json();
+          const lines = postprocess(data?.choices?.[0]?.message?.content,trigger === "postgame" ? 6 : 2);
+          if (lines.length === 0) return false;
+          const shownAt = performance.now();
+          coachThinking = false;
+          for (let index = 0; index < lines.length; index += 1) {
+            const text = lines[index];
+            coachTranscript.push({ who: "him", text, moveNo: details.moveNo, trigger, shownAt });
+            chatHistory.push({ who: "him", text, d: localDay() });
+            chatHistory = chatHistory.slice(-CHAT_CAP);
+            saveChat();
+            saveGame();
+            renderCoach();
+            if (index < lines.length - 1) {
+              await new Promise(resolve => window.setTimeout(resolve, 220));
+            }
+          }
+          if (trigger !== "hint" && trigger !== "chat") lastCoachMove = details.moveNo;
+          logEntry.ok = true;
+          logEntry.lines = lines.length;
+          logEntry.shownAt = shownAt;
+          return true;
+        } catch (_error) {
+          return false;
+        } finally {
+          window.clearTimeout(timeout);
+          logEntry.endedAt = performance.now();
+          if (activeCoachController === controller) activeCoachController = null;
+          coachThinking = false;
+          renderCoach();
+        }
+      }
+
+      function postgameDetails() {
+        const history = game.history();
+        const whiteMoves = history.filter((_san, index) => index % 2 === 0);
+        return {
+          moveNo: whiteMoves.length,
+          lastSan: whiteMoves.at(-1) || "",
+          summary: "這局已經結束，可以回頭看關鍵得失",
+          result: getGameResult(game),
+          pgn: history.join(" "),
+          blunders: evalHistory.filter(entry => entry.drop >= 200).map(entry => ({
+            moveNo: entry.moveNo,
+            san: entry.san,
+            summary: entry.summary || makeBlunderSummary(entry.drop)
+          }))
+        };
+      }
+
+      async function requestPostgame() {
+        if (postgameRequested || !isComputerMode() || !game.game_over()) return;
+        postgameRequested = true;
+        const details = postgameDetails();
+        const before = coachTranscript.length;
+        const ok = await askCoach("postgame", details);
+        if (!ok) return;
+        const comment = coachTranscript.slice(before).filter(entry => entry.who === "him" && entry.trigger === "postgame").map(entry => entry.text).join("\n");
+        const games = readJson(GAMES_KEY,[]);
+        games.push({ ts: Date.now(), result: details.result, moves: details.moveNo, pgn: details.pgn, blunders: details.blunders, comment });
+        safeSet(GAMES_KEY,JSON.stringify(games.slice(-30)));
+        const key = details.result === "player" ? "player" : details.result === "engine" ? "character" : "draw";
+        records[key] += 1;
+        safeSet(RECORD_KEY,JSON.stringify(records));
+      }
+
+      async function handleHumanGameOver(lastSan) {
+        if (!isComputerMode() || !game.game_over()) return;
+        const history = game.history();
+        const verboseHistory = game.history({ verbose: true });
+        const details = {
+          moveNo: Math.ceil(history.length / 2),
+          lastSan,
+          lastFact: moveFact(verboseHistory.at(-1), "玩家", "你"),
+          facts: boardFacts(game, null),
+          summary: "玩家這步讓對局直接進入終局",
+          result: getGameResult(game)
+        };
+        await askCoach("gameover", details);
+        await requestPostgame();
+      }
+
+      function analyzeEngineReply(uciMove, evalW) {
+        const match = /^([a-h][1-8])([a-h][1-8])([qrbn])?$/.exec(uciMove);
+        if (!match) return null;
+        const history = game.history();
+        const simulated = replayMoves(history);
+        if (!simulated) return null;
+        const engineMove = simulated.move({ from: match[1], to: match[2], promotion: match[3] || "q" });
+        if (!engineMove) return null;
+
+        const moveNo = Math.ceil(history.length / 2);
+        const lastSan = history.at(-1) || "";
+        evalHistory = evalHistory.filter(entry => entry.moveNo < moveNo);
+        const prevEvalW = evalHistory.length ? evalHistory.at(-1).evalW : 0;
+        const drop = evalW === null ? null : prevEvalW - evalW;
+        const blunderSummary = drop !== null && drop >= 200 ? makeBlunderSummary(drop, engineMove.captured) : "";
+        if (evalW !== null) {
+          evalHistory.push({ moveNo, san: lastSan, evalW, prevEvalW, drop, summary: blunderSummary });
+          saveGame();
+        }
+
+        const distance = lastCoachMove === null ? Infinity : moveNo - lastCoachMove;
+        const alreadyOpened = coachTranscript.some(entry => entry.trigger === "opening");   /* 開場白已提前到開桌，這裡只防重複 */
+        let trigger = null;
+        let summary = "局面繼續發展";
+        let result;
+
+        if (simulated.game_over()) {
+          trigger = "gameover";
+          summary = "對手這步讓對局進入終局";
+          result = getGameResult(simulated);
+        } else if (moveNo === 1 && !alreadyOpened) {
+          trigger = "opening";
+          summary = "玩家走出第一步，局面剛展開";
+        } else if (simulated.in_check() && distance >= 2) {
+          trigger = "check-her";
+          summary = "對手回手將軍，玩家的王正受攻擊";
+        } else if (drop !== null && drop >= 200 && distance >= 2) {
+          trigger = "blunder";
+          summary = blunderSummary;
+        } else if (game.in_check() && distance >= 2) {
+          trigger = "check-you";
+          summary = "玩家這步將軍，對手的王正受攻擊";
+        } else if (drop !== null && drop <= 30 && moveNo >= 6 && distance >= 8) {
+          trigger = "good";
+          summary = "局面穩住";
+        }
+        // 盤況翻譯官：事實清單對準 simulated（含引擎回手）——他本來就是先出話再落子，話講的是他出完手的局面
+        const verboseHistory = simulated.history({ verbose: true });
+        return {
+          match, moveNo, lastSan, trigger, summary, result,
+          lastFact: moveFact(verboseHistory.at(-2), "玩家", "你"),
+          engineFact: moveFact(verboseHistory.at(-1), "你", "玩家"),
+          facts: boardFacts(simulated, evalW)
+        };
+      }
+
+      function applyEngineMove(uciMove, elapsedMs, evalW) {
+        const match = /^([a-h][1-8])([a-h][1-8])(?:[qrbn])?$/.exec(uciMove);
+        if (!match) {
+          failEngine();
+          return;
+        }
+
+        const move = game.move({ from: match[1], to: match[2], promotion: "q" });
+        if (!move) {
+          failEngine();
+          return;
+        }
+
+        clearEngineTimer();
+        engineThinking = false;
+        lastEngineReply = Object.freeze({ uci: uciMove, san: move.san, elapsedMs, evalW, appliedAt: performance.now() });
+        const sysMove = [...coachTranscript].reverse().find(e => e.who === "sys" && e.kind === "move");
+        if (sysMove && !sysMove.text.includes("　他 ")) sysMove.text += "　他 " + move.san;
+        clearSelection();
+        saveGame();
+        render();
+        if (game.game_over()) void requestPostgame();
+      }
+
+      async function resolveEngineMove(uciMove, evalW, generation, elapsedMs) {
+        const analysis = analyzeEngineReply(uciMove, evalW);
+        if (!analysis) {
+          failEngine();
+          return;
+        }
+        let showedLines = false;
+        if (analysis.trigger) showedLines = await askCoach(analysis.trigger, analysis);
+        if (generation !== engineGeneration || !engineThinking) return;
+        if (showedLines) await new Promise(resolve => window.setTimeout(resolve, ENGINE_MOVE_DELAY_MS));
+        if (generation !== engineGeneration || !engineThinking) return;
+        applyEngineMove(uciMove, elapsedMs, evalW);
+      }
+
+      async function resolveHint(uciMove) {
+        clearEngineTimer();
+        const match = /^([a-h][1-8])([a-h][1-8])([qrbn])?$/.exec(uciMove);
+        const simulated = match ? replayMoves(game.history()) : null;
+        const bestMove = simulated ? simulated.move({ from: match[1], to: match[2], promotion: match[3] || "q" }) : null;
+        if (!bestMove) {
+          hintThinking = false;
+          renderCoach();
+          return;
+        }
+        const history = game.history();
+        await askCoach("hint", {
+          moveNo: currentMoveNo(),
+          lastSan: history.at(-1) || "",
+          bestSan: bestMove.san,
+          bestFact: moveFact(bestMove, "", "你"),   /* 盤況翻譯官：報答案用人話（哪格的哪顆子走去哪），不丟裸棋譜 */
+          facts: boardFacts(game, lastRecordedEvalW()),
+          askCount: hintAskCount,
+          summary: "玩家主動求救，想知道目前局面的走法"
+        });
+        hintThinking = false;
+        renderCoach();
+      }
+
+      function requestHint() {
+        if (!canRequestHint()) return;
+        hintAskCount += 1;
+        hintThinking = true;
+        sendEngineCommand("position fen " + game.fen());
+        sendEngineCommand("go movetime 500");
+        engineTimer = window.setTimeout(failEngine, 10000);
+        renderCoach();
+      }
+
+      function handleEngineMessage(event) {
+        const message = String(event.data).trim();
+        if (message === "uciok") {
+          engineReady = true;
+          sendEngineCommand("setoption name Skill Level value " + DIFFICULTIES[activeDifficulty].skill);
+          render();
+          requestEngineMove();
+          return;
+        }
+
+        const parsedEval = parseEvalW(message);
+        if (engineThinking && parsedEval !== null) lastSearchEvalW = parsedEval;
+
+        const bestMove = /^bestmove\s+(\S+)/.exec(message);
+        if (bestMove && hintThinking) {
+          void resolveHint(bestMove[1]);
+          return;
+        }
+        if (bestMove && engineThinking) {
+          clearEngineTimer();
+          const elapsedMs = Math.round(performance.now() - engineStartedAt);
+          const generation = engineGeneration;
+          void resolveEngineMove(bestMove[1], lastSearchEvalW, generation, elapsedMs);
+        }
+      }
+
+      function startEngine() {
+        stopEngine();
+        engineFailed = false;
+        try {
+          engine = new Worker("vendor/stockfish-18-lite-single.js");
+          engine.addEventListener("message", handleEngineMessage);
+          engine.addEventListener("error", failEngine, { once: true });
+          sendEngineCommand("uci");
+        } catch (_error) {
+          failEngine();
+        }
+      }
+
+      function requestEngineMove() {
+        if (!isComputerMode() || !engineReady || engineThinking || hintThinking || engineFailed || game.game_over() || game.turn() !== "b") return;
+        engineThinking = true;
+        engineStartedAt = performance.now();
+        lastSearchEvalW = null;
+        sendEngineCommand("position fen " + game.fen());
+        sendEngineCommand("go movetime " + DIFFICULTIES[activeDifficulty].movetime);
+        engineTimer = window.setTimeout(failEngine, 10000);
+        render();
+      }
+
+      function handleSquareClick(square) {
+        if (game.game_over() || isBoardLocked()) return;
+        if (isComputerMode() && game.turn() !== "w") return;
+
+        const destination = legalMoves.find(move => move.to === square);
+        if (selectedSquare && destination) {
+          const move = game.move({ from: selectedSquare, to: square, promotion: "q" });
+          hintAskCount = 0;
+          if (isComputerMode()) {
+            // 事件流實錄：時間軸不從棋譜倒推，發生什麼記什麼（悔棋才對得上，業主 08-28 抓包）
+            coachTranscript.push({ who: "sys", kind: "move", text: "第 " + Math.ceil(game.history().length / 2) + " 手　玩家 " + move.san, moveNo: Math.ceil(game.history().length / 2), shownAt: performance.now() });
+          }
+          clearSelection();
+          saveGame();
+          render();
+          if (game.game_over()) void handleHumanGameOver(move.san);
+          else requestEngineMove();
+          return;
+        }
+
+        if (!selectedSquare) {
+          const piece = game.get(square);
+          if (piece && piece.color === game.turn()) {
+            selectedSquare = square;
+            legalMoves = game.moves({ square, verbose: true });
+            renderBoard();
+          }
+          return;
+        }
+
+        clearSelection();
+        renderBoard();
+      }
+
+      boardElement.addEventListener("click", event => {
+        const square = event.target.closest(".square");
+        if (square) handleSquareClick(square.dataset.square);
+      });
+
+      undoButton.addEventListener("click", () => {
+        if (isComputerMode()) {
+          const hadMoves = game.history().length > 0;
+          if (!hadMoves) return;
+          startEngine();
+          game.undo();
+          if (game.turn() === "b") game.undo();
+          lastEngineReply = null;
+        } else if (!game.undo()) {
+          return;
+        }
+        const whiteMoveCount = Math.ceil(game.history().length / 2);
+        if (isComputerMode()) {
+          coachTranscript.push({ who: "sys", kind: "undo", text: "↺ 悔棋（重下第 " + (whiteMoveCount + 1) + " 手）", moveNo: null, shownAt: performance.now() });
+        }
+        hintAskCount = 0;
+        evalHistory = evalHistory.filter(entry => entry.moveNo <= whiteMoveCount);
+        // 悔棋不滅口：對話是發生過的事，只把冷卻帳夾回現況
+        const priorCoachMove = latestAutomaticCoachMove();
+        lastCoachMove = priorCoachMove === null ? null : Math.min(priorCoachMove, whiteMoveCount);
+        postgameRequested = false;
+        clearSelection();
+        if (game.history().length) saveGame();
+        else clearSavedGame();
+        render();
+      });
+
+      function startNewGame() {
+        clearSavedGame();
+        game = new Chess();
+        activeDifficulty = difficultySelect.value;
+        lastEngineReply = null;
+        coachTranscript = [];
+        hintAskCount = 0;
+        hintThinking = false;
+        chatSending = false;
+        evalHistory = [];
+        lastCoachMove = null;
+        postgameRequested = false;
+        coachThinking = false;
+        engineCommandLog.length = 0;
+        coachRequestLog.length = 0;
+        clearSelection();
+        difficultyNote.textContent = "";
+        if (isComputerMode()) startEngine();
+        else {
+          stopEngine();
+          engineFailed = false;
+        }
+        render();
+        void askCoach("opening", { moveNo: 0, summary: "新局剛開桌，玩家還沒動子" });
+      }
+
+      newGameButton.addEventListener("click", startNewGame);
+
+      modeSelect.addEventListener("change", startNewGame);
+
+      difficultySelect.addEventListener("change", () => {
+        difficultyNote.textContent = difficultySelect.value === activeDifficulty
+          ? ""
+          : "已選「" + DIFFICULTIES[difficultySelect.value].label + "」，按新局後生效。";
+      });
+
+      coachToggle.addEventListener("click", () => {
+        coachEnabled = !coachEnabled;
+        rememberCoachEnabled();
+        if (!coachEnabled) cancelCoachRequest();
+        renderCoach();
+      });
+
+      helpButton.addEventListener("click", requestHint);
+
+      // 本局對話浮窗：點任一頭像開（業主 08-28 版型：微透明、右上✕關掉繼續下棋）
+      const chatlogOverlay = document.createElement("div");
+      chatlogOverlay.className = "chatlog-overlay";
+      chatlogOverlay.hidden = true;
+      chatlogOverlay.innerHTML = '<div class="chatlog-panel"><div class="chatlog-head"><span class="chatlog-title">本局對話</span>' +
+        '<button type="button" class="chatlog-close" aria-label="關閉">✕</button></div><div class="chatlog-body"></div></div>';
+      document.body.append(chatlogOverlay);
+      const chatlogBody = chatlogOverlay.querySelector(".chatlog-body");
+      function openChatlog() {
+        // 檢討時間軸＝事件流實錄（業主 08-28 二訂）：走子/他回手/悔棋/對話，發生什麼列什麼——悔棋也在帳上
+        chatlogBody.replaceChildren();
+        if (!coachTranscript.length) {
+          const empty = document.createElement("p");
+          empty.className = "cl-empty";
+          empty.textContent = "這局還沒說過話。";
+          chatlogBody.append(empty);
+        }
+        if (coachTranscript.some(entry => entry.who !== "sys")) {
+          const day = document.createElement("div");
+          day.className = "cl-day";
+          day.textContent = "── " + localDay().slice(5).replace("-","/") + " ──";
+          chatlogBody.append(day);
+        }
+        for (const entry of coachTranscript) {
+          if (entry.who === "sys") {
+            const marker = document.createElement("div");
+            marker.className = "cl-move" + (entry.kind === "undo" ? " cl-undo" : "");
+            marker.textContent = entry.text;
+            chatlogBody.append(marker);
+            continue;
+          }
+          const row = document.createElement("div");
+          row.className = "cl-row " + entry.who;
+          const bubble = document.createElement("div");
+          bubble.className = "cl-bubble";
+          bubble.textContent = entry.text;
+          row.append(bubble);
+          chatlogBody.append(row);
+        }
+        chatlogOverlay.hidden = false;
+        chatlogBody.scrollTop = chatlogBody.scrollHeight;
+      }
+      chatlogOverlay.addEventListener("click", event => {
+        if (event.target === chatlogOverlay || event.target.closest(".chatlog-close")) chatlogOverlay.hidden = true;
+      });
+      document.querySelector(".avatar-him").addEventListener("click", openChatlog);
+      document.querySelector(".avatar-her").addEventListener("click", openChatlog);
+
+      chatForm.addEventListener("submit", async event => {
+        event.preventDefault();
+        if (!isComputerMode() || !coachEnabled || chatSending || hintThinking || activeCoachController !== null) return;
+        const text = chatInput.value.trim().slice(0, 300);
+        if (!text) return;
+
+        const history = game.history();
+        const moveNo = currentMoveNo();
+        chatSending = true;
+        chatInput.value = "";
+        coachTranscript.push({ who: "her", text, moveNo, trigger: "chat", shownAt: performance.now() });
+        chatHistory.push({ who: "you", text, d: localDay() });
+        chatHistory = chatHistory.slice(-CHAT_CAP);
+        saveChat();
+        saveGame();
+        renderCoach();
+
+        try {
+          const verboseHistory = game.history({ verbose: true });
+          await askCoach("chat", {
+            text,
+            moveNo,
+            // 玩家與引擎的手分開餵，避免把角色自己的棋算到玩家頭上。
+            lastSan: history.filter((_s, i) => i % 2 === 0).at(-1) || "",
+            engineSan: history.filter((_s, i) => i % 2 === 1).at(-1) || "",
+            lastFact: moveFact(verboseHistory.filter((_m, i) => i % 2 === 0).at(-1), "玩家", "你"),
+            engineFact: moveFact(verboseHistory.filter((_m, i) => i % 2 === 1).at(-1), "你", "玩家"),
+            facts: boardFacts(game, lastRecordedEvalW()),
+            summary: "玩家主動跟角色說話"
+          });
+        } finally {
+          chatSending = false;
+          renderCoach();
+          chatInput.focus();
+        }
+      });
+
+      function showHerAvatarFallback() {
+        herAvatar.hidden = true;
+        herAvatarFallback.hidden = false;
+      }
+
+      herAvatar.addEventListener("error", showHerAvatarFallback, { once: true });
+      if (herAvatar.complete && herAvatar.naturalWidth === 0) showHerAvatarFallback();
+
+      settingsToForm();
+      restoreChat();
+      renderIdentity();
+
+      elements.settingButton.addEventListener("click",() => { elements.settingsOverlay.hidden = false; elements.endpointInput.focus(); });
+      elements.settingsOverlay.addEventListener("click",event => { if (event.target === elements.settingsOverlay || event.target.closest("[data-close-settings]")) { persistSettings(); elements.settingsOverlay.hidden = true; } });
+      const persistUnlessFile = event => { if (event.target && event.target.type === "file") return; persistSettings(); };
+      elements.settingsForm.addEventListener("input",persistUnlessFile);
+      elements.settingsForm.addEventListener("change",persistUnlessFile);
+      document.querySelectorAll("[data-endpoint-preset]").forEach(button => button.addEventListener("click",() => {
+        const preset = button.dataset.endpointPreset;
+        elements.endpointInput.value = preset === "google" ? "https:" + "//generativelanguage.googleapis.com/v1beta/openai" : preset === "openrouter" ? "https:" + "//openrouter.ai/api/v1" : "";
+        persistSettings();
+        if (preset === "custom") elements.endpointInput.focus();
+      }));
+      elements.toggleKeyButton.addEventListener("click",() => { const showing = elements.apiKeyInput.type === "text"; elements.apiKeyInput.type = showing ? "password" : "text"; elements.toggleKeyButton.textContent = showing ? "顯示" : "隱藏"; });
+      elements.loadModelsButton.addEventListener("click",() => void loadModels());
+      elements.modelSelect.addEventListener("change",() => { if (!elements.modelSelect.value) return; elements.modelInput.value = elements.modelSelect.value; persistSettings(); elements.modelStatus.textContent = "已選 " + elements.modelSelect.value; });
+      elements.cardFileInput.addEventListener("change",() => void handleImportInput(elements.cardFileInput));
+      elements.memoryFileInput.addEventListener("change",() => void handleImportInput(elements.memoryFileInput));
+      elements.exportCardButton.addEventListener("click",exportCard);
+      elements.exportMemoryButton.addEventListener("click",exportMemory);
+      elements.himAvatarInput.addEventListener("change",async () => { const file = elements.himAvatarInput.files?.[0]; if (!file) return; elements.avatarStatus.textContent = "正在處理他的頭像…"; try { await setAvatarFromFile(file,"avatarDataUrl"); elements.avatarStatus.textContent = "他的頭像已儲存。"; } catch (error) { elements.avatarStatus.textContent = "頭像失敗：" + (error?.message || "未知原因"); } finally { elements.himAvatarInput.value = ""; } });
+      elements.playerAvatarInput.addEventListener("change",async () => { const file = elements.playerAvatarInput.files?.[0]; if (!file) return; elements.avatarStatus.textContent = "正在處理你的頭像…"; try { await setAvatarFromFile(file,"playerAvatarDataUrl"); elements.avatarStatus.textContent = "你的頭像已儲存。"; } catch (error) { elements.avatarStatus.textContent = "頭像失敗：" + (error?.message || "未知原因"); } finally { elements.playerAvatarInput.value = ""; } });
+      elements.clearButton.addEventListener("click",() => clearAllData(false));
+      document.addEventListener("keydown",event => { if (event.key === "Escape") { elements.settingsOverlay.hidden = true; chatlogOverlay.hidden = true; } });
+
+      if (restoreSavedGame()) {
+        if (isComputerMode()) startEngine();
+        else {
+          stopEngine();
+          engineFailed = false;
+        }
+        render();
+      } else {
+        startNewGame();
+      }
+
+      function runSelfTest() {
+        const opening = new Chess();
+        const openingMoves = opening.moves().length;
+        const initialFen = opening.fen();
+        const illegalResult = opening.move({ from: "e2", to: "e5", promotion: "q" });
+
+        const clickSample = new Chess();
+        const sampledMoves = [
+          { from: "e2", to: "e4" },
+          { from: "e7", to: "e5" },
+          { from: "g1", to: "f3" }
+        ];
+        const clickablePlies = sampledMoves.filter(move => clickSample.move(move)).length;
+
+        // 盤況翻譯官自測：1.d4 d5 2.e4 的 e4 兵懸空，d5 有皇后保護。
+        const translator = new Chess();
+        ["d4", "d5", "e4"].forEach(move => translator.move(move));
+        const translatorFacts = boardFacts(translator, 40);
+        const translatorHistory = translator.history({ verbose: true });
+        const captureGame = new Chess();
+        ["d4", "d5", "e4", "dxe4"].forEach(move => captureGame.move(move));
+        const captureFact = moveFact(captureGame.history({ verbose: true }).at(-1), "你", "玩家");
+
+        const scholar = new Chess();
+        ["e4", "e5", "Bc4", "Nc6", "Qh5", "Nf6", "Qxf7#"].forEach(move => scholar.move(move));
+        const scholarGameOver = scholar.game_over();
+        const beforeUndoHistory = scholar.history().length;
+        const beforeUndoFen = scholar.fen();
+        scholar.undo();
+
+        const results = Object.freeze({
+          a_openingMoves: openingMoves,
+          a_clickablePlies: clickablePlies,
+          b_illegalRejected: illegalResult === null,
+          b_boardUnchanged: opening.fen() === initialFen,
+          c_gameOver: scholarGameOver,
+          d_historyBefore: beforeUndoHistory,
+          d_historyAfter: scholar.history().length,
+          d_boardRolledBack: scholar.get("h5")?.type === "q" && scholar.get("f7")?.type === "p",
+          e_evalCpWhiteSign: parseEvalW("info depth 8 score cp 23 nodes 10") === -23,
+          e_evalMateWhiteSign: parseEvalW("info depth 8 score mate 3 nodes 10") === -10000,
+          f_moveFact: moveFact(translatorHistory.at(-1), "玩家", "你") === "玩家把 e2 的小兵走到 e4",
+          f_captureFact: captureFact === "你用 d5 的小兵吃掉玩家 e4 的小兵",
+          f_hangingPawnSpotted: translatorFacts.some(fact => fact.includes("玩家 e4 的小兵") && fact.includes("沒有子保護")),
+          f_defendedNotFlagged: !translatorFacts.some(fact => fact.startsWith("威脅：") && fact.includes("d5")),
+          f_landingPlayer: translatorFacts.some(fact => fact.startsWith("玩家剛走到 e4 的小兵：在白方這半邊") && fact.includes("正被你的小兵攻擊") && fact.includes("沒有子保護")),
+          f_landingHim: translatorFacts.some(fact => fact.startsWith("你剛走到 d5 的小兵：在黑方這半邊") && fact.includes("正被玩家的小兵攻擊") && fact.includes("有 1 顆子保護")),
+          f_evalWordSign: evalFact(-250) === "引擎判定：你明顯佔優（約 2.5 個兵的價值）",
+          f_materialEven: materialFact(translator) === "子力：雙方相當"
+        });
+        console.info("[西洋棋一期自測] " + JSON.stringify(results));
+        return results;
+      }
+
+      window.chessSelfTest = runSelfTest();
+      window.echecsTest = Object.freeze({
+        selfTest: runSelfTest,
+        snapshot: () => Object.freeze({
+          mode: modeSelect.value,
+          selectedDifficulty: difficultySelect.value,
+          activeDifficulty,
+          history: game.history(),
+          turn: game.turn(),
+          engineReady,
+          engineThinking,
+          engineFailed,
+          boardLocked: isBoardLocked(),
+          lastEngineReply,
+          commands: engineCommandLog.map(entry => entry.command),
+          coachEnabled,
+          coachThinking,
+          hintThinking,
+          hintAskCount,
+          chatSending,
+          settings: { ...settings, apiKey: settings.apiKey ? "(set)" : "" },
+          records: { ...records },
+          games: readJson(GAMES_KEY,[]),
+          chatHistory: chatHistory.map(entry => ({ ...entry })),
+          coachTranscript: coachTranscript.map(entry => ({ ...entry })),
+          evalHistory: evalHistory.map(entry => ({ ...entry })),
+          coachRequests: coachRequestLog.map(entry => ({ ...entry })),
+          hintRequests: coachRequestLog.filter(entry => entry.trigger === "hint").map(entry => ({ ...entry })),
+          chatRequests: coachRequestLog.filter(entry => entry.trigger === "chat").map(entry => ({ ...entry })),
+          saved: (() => {
+            try { return JSON.parse(localStorage.getItem(SAVE_KEY) || "null"); }
+            catch (_error) { return null; }
+          })()
+        }),
+        parseEvalW,
+        normalizeCharacterCard,
+        parseTavernPngBytes,
+        parseCardFile,
+        applyParsedCard,
+        importJsonPayload,
+        cardPackage,
+        memoryPackage,
+        exportCard,
+        exportMemory,
+        loadModels,
+        buildMessages,
+        buildTrigger,
+        postprocess,
+        setSettings(next) { settings = { ...settings, ...next }; settingsToForm(); persistSettings(); return { ...settings, apiKey: settings.apiKey ? "(set)" : "" }; },
+        clearAllData() { return clearAllData(true); },
+        async request(trigger,details = {}) { return askCoach(trigger,{ moveNo: currentMoveNo(), summary: "測試觸發", ...details }); },
+        setGameMoves(moves) {
+          stopEngine();
+          const next = new Chess();
+          for (const move of moves) if (!next.move(move)) throw new Error("無效測試走法：" + move);
+          game = next;
+          postgameRequested = false;
+          evalHistory = [];
+          coachTranscript = [];
+          render();
+          return game.history();
+        },
+        requestPostgame,
+        startNewGame
+      });
+    })();
+  </script>
+</body>
+</html>
