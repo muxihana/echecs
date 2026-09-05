@@ -601,6 +601,8 @@
     .status { min-height: 1.5em; margin: 0; color: var(--muted); font-size: .8rem; }
     .field-hint { margin: 4px 0 10px; color: var(--muted); font-size: .76rem; line-height: 1.5; }
     .field-hint a { color: #87525b; text-decoration: underline; text-underline-offset: 2px; }
+    .toggle-row { display: flex; align-items: center; gap: 8px; font-weight: 600; color: var(--ink, #4a3728); cursor: pointer; }
+    .toggle-row input { width: 18px; height: 18px; accent-color: #b76e79; }
     .privacy-mini { margin: 0; color: var(--muted); font-size: .78rem; line-height: 1.55; }
 
     @media (max-width: 760px) {
@@ -721,6 +723,7 @@
           <div class="field"><label for="characterDescriptionInput">角色描述</label><textarea id="characterDescriptionInput" name="characterDescription" placeholder="外觀、性格、說話風格"></textarea></div>
           <div class="field"><label for="playerNameInput">玩家稱呼（他怎麼叫你）</label><input id="playerNameInput" name="playerName" value="你" autocomplete="off"></div>
           <div class="field"><label for="playerSkillInput">你的棋力</label><select id="playerSkillInput" name="playerSkill"><option value="beginner">初學者</option><option value="experienced">會下</option></select></div>
+          <div class="field"><label class="toggle-row"><input id="postgameToggle" type="checkbox" checked> 終局複盤（每局結束多一次呼叫，讓他講評整局）</label></div>
           <div class="avatar-upload-grid">
             <div class="avatar-slot"><span class="avatar-preview"><img id="himAvatarPreview" alt="" hidden><span id="himPreviewEmpty">角</span></span><label class="upload-label">他的頭像<input id="himAvatarInput" type="file" accept="image/*"></label></div>
             <div class="avatar-slot"><span class="avatar-preview"><img id="playerAvatarPreview" alt="" hidden><span id="playerPreviewEmpty">你</span></span><label class="upload-label">你的頭像<input id="playerAvatarInput" type="file" accept="image/*"></label></div>
@@ -842,6 +845,8 @@
       let evalHistory = [];
       let lastCoachMove = null;
       let postgameRequested = false;
+      const POSTGAME_KEY = STORE_PREFIX + "postgame_v1";   // 終局複盤開關（業主 09-05：跟五子棋同一顆勾勾，預設開）
+      let postgameEnabled = safeGet(POSTGAME_KEY) !== "false";
       let settings = readSettings();
       let chatHistory = [];
       let records = readRecords();
@@ -1790,7 +1795,7 @@
       }
 
       async function requestPostgame() {
-        if (postgameRequested || !isComputerMode() || !game.game_over()) return;
+        if (!postgameEnabled || postgameRequested || !isComputerMode() || !game.game_over()) return;
         postgameRequested = true;
         const details = postgameDetails();
         const before = coachTranscript.length;
@@ -2101,6 +2106,8 @@
           : "已選「" + DIFFICULTIES[difficultySelect.value].label + "」，按新局後生效。";
       });
 
+      const postgameToggle = document.getElementById("postgameToggle");
+      if (postgameToggle) { postgameToggle.checked = postgameEnabled; postgameToggle.addEventListener("change", () => { postgameEnabled = postgameToggle.checked; safeSet(POSTGAME_KEY, String(postgameEnabled)); }); }
       coachToggle.addEventListener("click", () => {
         coachEnabled = !coachEnabled;
         rememberCoachEnabled();
