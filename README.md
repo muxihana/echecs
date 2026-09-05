@@ -18,7 +18,9 @@ python -m http.server 8000
 
 然後開 `http://127.0.0.1:8000/`。
 
-## 金鑰保母
+## 金鑰教學
+
+站內圖文版（拿金鑰六步、免費層確認、設定頁逐欄）在棋室大廳：`https://muxihana.github.io/chambre/guide.html`。
 
 Google AI Studio 用法：
 
